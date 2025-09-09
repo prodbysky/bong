@@ -75,12 +75,15 @@ typedef struct {
     size_t pos;
 } Lexer;
 
+
 bool lexer_done(const Lexer* lexer);
 void lexer_skip_ws(Lexer* lexer);
 char lexer_bump(Lexer* lexer);
 char lexer_peek(const Lexer* lexer);
 bool lexer_run(Lexer* lexer, Tokens* out);
 bool lexer_number(Lexer* lexer, Token* out);
+
+void print_token(const Token* t);
 
 Arena arena_new(size_t size);
 void* arena_alloc(Arena* a, size_t size);
@@ -98,6 +101,18 @@ int main(int argc, char** argv) {
     };
     Tokens tokens = {0};
     if (!lexer_run(&l, &tokens)) return 1;
+    for (size_t i = 0; i < tokens.count; i++) {
+        print_token(&tokens.items[i]);
+        printf("\n");
+    }
+}
+
+void print_token(const Token* t) {
+    switch (t->type) {
+        case TT_NUMBER: {
+            printf("Number: %lu", t->number);
+        }
+    }
 }
 
 bool lexer_run(Lexer* lexer, Tokens* out) {
