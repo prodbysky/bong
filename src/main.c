@@ -1,6 +1,7 @@
 #include <assert.h>
 #include <ctype.h>
 #include <errno.h>
+#include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -41,6 +42,11 @@ typedef struct {
     size_t count;
 } StringView;
 
+typedef struct {
+    String content;
+    const char* name;
+} SourceFile;
+
 #define STR_FMT "%.*s" 
 #define STR_ARG(s) (int)(s)->count, (s)->items
 
@@ -56,7 +62,9 @@ typedef enum {
 
 typedef struct {
     TokenType type;
+    SourceFile const * file;
     size_t offset;
+    size_t len;
     union {
         uint64_t number;
         OperatorType op;
@@ -69,17 +77,20 @@ typedef struct {
     size_t capacity;
 } Tokens;
 
-
-typedef struct {
-    String content;
-    const char* name;
-} SourceFile;
-
 typedef struct {
     SourceFile const* source;
     Arena* arena;
     size_t pos;
 } Lexer;
+
+typedef struct {
+    size_t line;
+    size_t col;
+} Location;
+
+Location get_loc(const SourceFile* file, size_t offset);
+ptrdiff_t get_line_begin(const SourceFile* file, size_t offset);
+ptrdiff_t get_line_end(const SourceFile* file, size_t offset);
 
 
 bool lexer_done(const Lexer* lexer);
@@ -88,6 +99,7 @@ char lexer_bump(Lexer* lexer);
 char lexer_peek(const Lexer* lexer);
 bool lexer_run(Lexer* lexer, Tokens* out);
 bool lexer_number(Lexer* lexer, Token* out);
+
 
 void print_token(const Token* t);
 
@@ -138,17 +150,25 @@ bool lexer_run(Lexer* lexer, Tokens* out) {
             continue;
         }
         if (lexer_peek(lexer) == '+') {
-            Token t = {.type = TT_OPERATOR, .offset = lexer->pos, .op = OT_PLUS};
+            Token t = {.type = TT_OPERATOR, .offset = lexer->pos, .op = OT_PLUS, .len = 1, .file = lexer->source};
             da_push(out, t, lexer->arena);
             lexer_bump(lexer);
             continue;
         }
         if (lexer_peek(lexer) == '-') {
-            Token t = {.type = TT_OPERATOR, .offset = lexer->pos, .op = OT_MINUS};
+            Token t = {.type = TT_OPERATOR, .offset = lexer->pos, .op = OT_MINUS, .len = 1, .file = lexer->source};
             da_push(out, t, lexer->arena);
             lexer_bump(lexer);
             continue;
         }
+        // We loooove lumps of code
+        // I don't want to over abstract this code so when I see the pattern I'll do so
+        printf("[ERROR]: Unknown char found when lexing the source code: %c\n", lexer_peek(lexer));
+        Location loc = get_loc(lexer->source, lexer->pos);
+        printf("./%s:%zu:%zu\n", lexer->source->name, loc.line, loc.col);
+        ptrdiff_t begin = get_line_begin(lexer->source, lexer->pos);
+        printf("%.*s\n", (int)(get_line_end(lexer->source, lexer->pos) - begin), &lexer->source->content.items[begin]);
+        return false;
     }
 
     return true;
@@ -157,17 +177,53 @@ bool lexer_run(Lexer* lexer, Tokens* out) {
 bool lexer_number(Lexer* lexer, Token* out) {
     out->offset = lexer->pos;
     out->type = TT_NUMBER;
+    out->file = lexer->source;
     while (!lexer_done(lexer) && isalnum(lexer_peek(lexer))) lexer_bump(lexer);
     if (lexer_done(lexer)) {
         out->number = strtoull(lexer->source->content.items + out->offset, NULL, 10);
+        out->len = lexer->pos - out->offset;
         return true;
     }
-    if (isalpha(lexer_peek(lexer))) {
+    if (isascii(lexer_peek(lexer))) {
         printf("[ERROR]: Non-separated number literal found\n");
+        Location loc = get_loc(lexer->source, lexer->pos);
+        printf("./%s:%zu:%zu\n", lexer->source->name, loc.line, loc.col);
+        ptrdiff_t begin = get_line_begin(lexer->source, lexer->pos);
+        printf("%.*s\n", (int)(get_line_end(lexer->source, lexer->pos) - begin), &lexer->source->content.items[begin]);
         return false;
     }
     out->number = strtoull(lexer->source->content.items + out->offset, NULL, 10);
+    out->len = lexer->pos - out->offset;
     return true;
+}
+
+Location get_loc(const SourceFile* file, size_t offset) {
+    Location l = {.line = 1, .col = 1};
+    for (size_t i = 0; i < offset && i < file->content.count; i++) {
+        if (file->content.items[i] == '\n') {
+            l.line += 1;
+            l.col = 1;
+        } else {
+            l.col++;
+        }
+    }
+    return l;
+}
+
+ptrdiff_t get_line_begin(const SourceFile* file, size_t offset) {
+    ptrdiff_t result = 0;
+    for (size_t i = 0; i < offset && i < file->content.count; i++) {
+        if (file->content.items[i] == '\n') result = i;
+    }
+    return result;
+}
+
+ptrdiff_t get_line_end(const SourceFile* file, size_t offset) {
+    ptrdiff_t result = 0;
+    for (int i = file->content.count - 1; i > offset && i > 0; i--) {
+        if (file->content.items[i] == '\n') return i;
+    }
+    return -1;
 }
 
 void lexer_skip_ws(Lexer* lexer) {
