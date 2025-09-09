@@ -5,7 +5,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <unistd.h>
 #define NOB_IMPLEMENTATION
 #include "../nob.h"
 
@@ -46,14 +45,21 @@ typedef struct {
 #define STR_ARG(s) (int)(s)->count, (s)->items
 
 typedef enum {
-    TT_NUMBER
+    TT_NUMBER,
+    TT_OPERATOR
 } TokenType;
+
+typedef enum {
+    OT_PLUS,
+    OT_MINUS,
+} OperatorType;
 
 typedef struct {
     TokenType type;
     size_t offset;
     union {
         uint64_t number;
+        OperatorType op;
     };
 } Token;
 
@@ -111,6 +117,14 @@ void print_token(const Token* t) {
     switch (t->type) {
         case TT_NUMBER: {
             printf("Number: %lu", t->number);
+            break;
+        }
+        case TT_OPERATOR: {
+            switch (t->op) {
+                case OT_PLUS: printf("Operator `+`"); break;
+                case OT_MINUS: printf("Operator `-`"); break;
+            }
+            break;
         }
     }
 }
@@ -121,6 +135,18 @@ bool lexer_run(Lexer* lexer, Tokens* out) {
             Token t = {0};
             if (!lexer_number(lexer, &t)) return false;
             da_push(out, t, lexer->arena);
+            continue;
+        }
+        if (lexer_peek(lexer) == '+') {
+            Token t = {.type = TT_OPERATOR, .offset = lexer->pos, .op = OT_PLUS};
+            da_push(out, t, lexer->arena);
+            lexer_bump(lexer);
+            continue;
+        }
+        if (lexer_peek(lexer) == '-') {
+            Token t = {.type = TT_OPERATOR, .offset = lexer->pos, .op = OT_MINUS};
+            da_push(out, t, lexer->arena);
+            lexer_bump(lexer);
             continue;
         }
     }
