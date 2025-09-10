@@ -88,10 +88,62 @@ typedef struct {
     size_t col;
 } Location;
 
-Location get_loc(const SourceFile* file, size_t offset);
-ptrdiff_t get_line_begin(const SourceFile* file, size_t offset);
-ptrdiff_t get_line_end(const SourceFile* file, size_t offset);
+typedef struct {
+    SourceFile const* source;
+    Tokens* tokens;
+    Token last_token;
+    Arena* arena;
+    size_t pos;
+} Parser;
 
+typedef enum {
+    NT_NUMBER,
+    NT_BIN
+} NodeType;
+
+typedef struct Node {
+    NodeType type;
+    union {
+        uint64_t number;
+        struct {
+            struct Node* l;
+            struct Node* r;
+            OperatorType op;
+        } bin;
+    };
+} Node;
+
+typedef struct {
+    Node* items;
+    size_t count;
+    size_t capacity;
+} Nodes;
+
+bool parser_parse(Parser* parser, Nodes* out);
+bool parser_peek(const Parser* parser, Token* out);
+bool parser_bump(Parser* parser, Token* out);
+bool parser_expect_and_bump(Parser* parser, TokenType type, Token* out);
+bool parser_empty(const Parser* parser);
+/*
+    Ref: Crafting interpreters page 80
+    expression → equality ;
+    equality → comparison ( ( "!=" | "==" ) comparison )* ;
+    comparison → term ( ( ">" | ">=" | "<" | "<=" ) term )* ;
+    term → factor ( ( "-" | "+" ) factor )* ;
+    factor → unary ( ( "/" | "*" ) unary )* ;
+    unary → ( "!" | "-" ) unary
+    | primary ;
+    primary → NUMBER | STRING | "true" | "false"
+    | "(" expression ")" ;
+*/
+bool parser_expression(Parser* parser, Node* out);
+bool parser_eq(Parser* parser, Node* out);
+bool parser_cmp(Parser* parser, Node* out);
+bool parser_term(Parser* parser, Node* out);
+bool parser_factor(Parser* parser, Node* out);
+bool parser_unary(Parser* parser, Node* out);
+bool parser_primary(Parser* parser, Node* out);
+void print_node(const Node* n, int indent);
 
 bool lexer_done(const Lexer* lexer);
 void lexer_skip_ws(Lexer* lexer);
@@ -99,14 +151,17 @@ char lexer_bump(Lexer* lexer);
 char lexer_peek(const Lexer* lexer);
 bool lexer_run(Lexer* lexer, Tokens* out);
 bool lexer_number(Lexer* lexer, Token* out);
-
-
 void print_token(const Token* t);
+
+// All of these can probably be mushed together
+Location get_loc(const SourceFile* file, size_t offset);
+ptrdiff_t get_line_begin(const SourceFile* file, size_t offset);
+ptrdiff_t get_line_end(const SourceFile* file, size_t offset);
+
+bool read_entire_file(const char* path, SourceFile* f, Arena* arena);
 
 Arena arena_new(size_t size);
 void* arena_alloc(Arena* a, size_t size);
-
-bool read_entire_file(const char* path, SourceFile* f, Arena* arena);
 
 int main(int argc, char** argv) {
     Arena arena = arena_new(1024 * 1024 * 8);
@@ -123,6 +178,124 @@ int main(int argc, char** argv) {
         print_token(&tokens.items[i]);
         printf("\n");
     }
+    Parser p = {
+        .arena = &arena,
+        .last_token = tokens.items[0],
+        .pos = 0,
+        .source = &file,
+        .tokens = &tokens,
+    };
+    Nodes nodes = {0};
+    parser_parse(&p, &nodes);
+    print_node(&nodes.items[0], 0);
+}
+
+void print_node(const Node* n, int indent) {
+    switch (n->type) {
+        case NT_NUMBER: {
+            printf("%.*s%zu\n", indent * 2, " ", n->number);
+            return;
+        }
+        case NT_BIN: {
+            print_node(n->bin.l, indent + 1);
+            print_node(n->bin.r, indent + 1);
+            return;
+        }
+    }
+}
+
+bool parser_parse(Parser* parser, Nodes* out) {
+    while (!parser_empty(parser)) {
+        Node n = {0};
+        if (!parser_expression(parser, &n)) return false;
+        da_push(out, n, parser->arena);
+    }
+    return true;
+}
+bool parser_expression(Parser* parser, Node* out) {
+    return parser_eq(parser, out);
+}
+bool parser_eq(Parser* parser, Node* out) {
+    return parser_cmp(parser, out);
+}
+bool parser_cmp(Parser* parser, Node* out) {
+    return parser_term(parser, out);
+}
+bool parser_term(Parser* parser, Node* out) {
+    if (!parser_factor(parser, out)) return false;
+    while (!parser_empty(parser)) {
+        Token t = {0};
+        if (!parser_expect_and_bump(parser, TT_OPERATOR, &t)) {
+            break;
+        }
+        if (t.op == OT_PLUS || t.op == OT_MINUS) {
+            Node* left = arena_alloc(parser->arena, sizeof(Node));
+            *left = *out; // copy old expression into left
+            out->type = NT_BIN;
+            out->bin.l = left;
+            out->bin.op = t.op;
+            out->bin.r = arena_alloc(parser->arena, sizeof(Node));
+            if (!parser_factor(parser, out->bin.r)) return false;
+        }
+    }
+    return true;
+}
+bool parser_factor(Parser* parser, Node* out) {
+    return parser_unary(parser, out);
+}
+bool parser_unary(Parser* parser, Node* out) {
+    return parser_primary(parser, out);
+}
+bool parser_primary(Parser* parser, Node* out) {
+    Token t = {0};
+    if (!parser_bump(parser, &t)) {
+        printf("[ERROR]: Missing expression\n");
+        return false;
+    }
+    switch (t.type) {
+        case TT_NUMBER: {
+            out->type = NT_NUMBER;
+            out->number = t.number;
+            return true;
+        }
+        default: {
+            printf("[ERROR]: Unexpected token in place of primary expression %d\n", t.type);
+            return false;
+        }
+    }
+}
+
+bool parser_expect_and_bump(Parser* parser, TokenType type, Token* out) {
+    if (!parser_bump(parser, out)) {
+        return false;
+    }
+    if (out->type != type) {
+        // TODO: Human readable token printing
+        printf("[ERROR]: Expected token: %d, got: %d\n", type, out->type);
+        return false;
+    }
+    return true;
+}
+bool parser_bump(Parser* parser, Token* out) {
+    if (!parser_peek(parser, out)) {
+        printf("[ERROR]: Tried to bump empty lexer\n");
+        return false;
+    }
+    parser->last_token = *out;
+    parser->pos++;
+    return true;
+}
+bool parser_peek(const Parser* parser, Token* out) {
+    if (parser_empty(parser)) {
+        printf("[ERROR]: Tried to peek empty lexer\n");
+        return false;
+    }
+    *out = parser->tokens->items[parser->pos];
+    return true;
+}
+
+bool parser_empty(const Parser* parser) {
+    return parser->pos >= parser->tokens->count;
 }
 
 void print_token(const Token* t) {
@@ -184,7 +357,7 @@ bool lexer_number(Lexer* lexer, Token* out) {
         out->len = lexer->pos - out->offset;
         return true;
     }
-    if (isascii(lexer_peek(lexer))) {
+    if (isalpha(lexer_peek(lexer))) {
         printf("[ERROR]: Non-separated number literal found\n");
         Location loc = get_loc(lexer->source, lexer->pos);
         printf("./%s:%zu:%zu\n", lexer->source->name, loc.line, loc.col);
@@ -196,7 +369,6 @@ bool lexer_number(Lexer* lexer, Token* out) {
     out->len = lexer->pos - out->offset;
     return true;
 }
-
 Location get_loc(const SourceFile* file, size_t offset) {
     Location l = {.line = 1, .col = 1};
     for (size_t i = 0; i < offset && i < file->content.count; i++) {
