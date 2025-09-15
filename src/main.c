@@ -1,6 +1,7 @@
 #include <assert.h>
 #include <ctype.h>
 #include <errno.h>
+#include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -9,7 +10,7 @@
 #define NOB_IMPLEMENTATION
 #include "../nob.h"
 
-
+// ---- Dynamic arrays ----
 #define DA_INIT_CAP 16
 #define da_push(arr, item, arena) do { \
     if ((arr)->capacity == 0) {\
@@ -25,12 +26,17 @@
     (arr)->items[(arr)->count++] = (item);\
 } while (false)
 
+// ---- Arena allocator ----
 typedef struct {
     uint8_t* buffer;
     size_t capacity;
     size_t used;
 } Arena;
 
+Arena arena_new(size_t size);
+void* arena_alloc(Arena* a, size_t size);
+
+// ---- Easier strings
 typedef struct {
     char* items;
     size_t count;
@@ -42,23 +48,42 @@ typedef struct {
     size_t count;
 } StringView;
 
+#define STR_FMT "%.*s" 
+#define STR_ARG(s) (int)(s)->count, (s)->items
+
+// ---- File system ----
 typedef struct {
     String content;
     const char* name;
 } SourceFile;
 
-#define STR_FMT "%.*s" 
-#define STR_ARG(s) (int)(s)->count, (s)->items
+bool read_entire_file(const char* path, SourceFile* f, Arena* arena);
 
+// ---- Config from CLI
+typedef struct {
+    const char* prog_name;
+    const char* input;
+} Config;
+
+bool parse_config(int argc, char** argv, Config* out);
+
+// ---- Lexer ----
 typedef enum {
     TT_NUMBER,
-    TT_OPERATOR
+    TT_OPERATOR,
+    TT_SEMI,
+    TT_KEYWORD,
 } TokenType;
 
 typedef enum {
     OT_PLUS,
     OT_MINUS,
 } OperatorType;
+
+typedef enum {
+    KT_NO = 0,
+    KT_RETURN,
+} KeywordType;
 
 typedef struct {
     TokenType type;
@@ -68,6 +93,7 @@ typedef struct {
     union {
         uint64_t number;
         OperatorType op;
+        KeywordType kw;
     };
 } Token;
 
@@ -83,22 +109,31 @@ typedef struct {
     size_t pos;
 } Lexer;
 
-typedef struct {
-    size_t line;
-    size_t col;
-} Location;
+bool lexer_done(const Lexer* lexer);
+void lexer_skip_ws(Lexer* lexer);
+char lexer_bump(Lexer* lexer);
+char lexer_peek(const Lexer* lexer);
+bool lexer_run(Lexer* lexer, Tokens* out);
+bool lexer_number(Lexer* lexer, Token* out);
+bool lexer_kw_or_id(Lexer* lexer, Token* out);
+KeywordType lexer_to_kw(const char* pos, size_t len);
+void print_token(const Token* t);
 
+// ---- Parser ----
 typedef struct {
     SourceFile const* source;
     Tokens* tokens;
-    Token last_token;
     Arena* arena;
     size_t pos;
 } Parser;
 
 typedef enum {
     NT_NUMBER,
-    NT_BIN
+    NT_BIN,
+    // first statement like expression, which results in the last expression in a block
+    // OR an explicit return <value>;
+    // also all of these subexpressions are of primary binding power so they are the same as numbers, ids, ...
+    NT_RET,
 } NodeType;
 
 typedef struct Node {
@@ -110,6 +145,7 @@ typedef struct Node {
             struct Node* r;
             OperatorType op;
         } bin;
+        struct Node* ret;
     };
 } Node;
 
@@ -143,30 +179,28 @@ bool parser_term(Parser* parser, Node* out);
 bool parser_factor(Parser* parser, Node* out);
 bool parser_unary(Parser* parser, Node* out);
 bool parser_primary(Parser* parser, Node* out);
+Token parser_last_token(const Parser* parser);
 void print_node(const Node* n, int indent);
 
-bool lexer_done(const Lexer* lexer);
-void lexer_skip_ws(Lexer* lexer);
-char lexer_bump(Lexer* lexer);
-char lexer_peek(const Lexer* lexer);
-bool lexer_run(Lexer* lexer, Tokens* out);
-bool lexer_number(Lexer* lexer, Token* out);
-void print_token(const Token* t);
 
-// All of these can probably be mushed together
+// ---- Errors (locations) ----
+typedef struct {
+    size_t line;
+    size_t col;
+} Location;
+
 Location get_loc(const SourceFile* file, size_t offset);
 ptrdiff_t get_line_begin(const SourceFile* file, size_t offset);
 ptrdiff_t get_line_end(const SourceFile* file, size_t offset);
+void bong_error(const SourceFile* source, size_t begin);
 
-bool read_entire_file(const char* path, SourceFile* f, Arena* arena);
-
-Arena arena_new(size_t size);
-void* arena_alloc(Arena* a, size_t size);
 
 int main(int argc, char** argv) {
     Arena arena = arena_new(1024 * 1024 * 8);
+    Config c = {0};
+    if (!parse_config(argc, argv, &c)) return false;
     SourceFile file = {0};
-    if (!read_entire_file("test.bg", &file, &arena)) return 1;
+    if (!read_entire_file(c.input, &file, &arena)) return 1;
     Lexer l = {
         .pos = 0,
         .source = &file,
@@ -174,20 +208,48 @@ int main(int argc, char** argv) {
     };
     Tokens tokens = {0};
     if (!lexer_run(&l, &tokens)) return 1;
-    for (size_t i = 0; i < tokens.count; i++) {
-        print_token(&tokens.items[i]);
-        printf("\n");
-    }
     Parser p = {
         .arena = &arena,
-        .last_token = tokens.items[0],
         .pos = 0,
         .source = &file,
         .tokens = &tokens,
     };
     Nodes nodes = {0};
-    parser_parse(&p, &nodes);
-    print_node(&nodes.items[0], 0);
+    if (!parser_parse(&p, &nodes)) return 1;
+}
+
+static void help(const char* prog_name) {
+    printf("%s [OPTIONS] <input.bg>\n", prog_name);
+    printf("OPTIONS:\n");
+    printf("  -help: Prints this help message");
+}
+
+bool parse_config(int argc, char** argv, Config* out) {
+    out->prog_name = *argv++; argc--;
+    if (argc == 0) {
+        printf("[ERROR]: No flags/inputs/subcommands provided\n");
+        help(out->prog_name);
+        exit(0);
+    }
+    while (argc != 0) {
+        if (strcmp(*argv, "-help") == 0) {
+            help(out->prog_name);
+            exit(0);
+        } else {
+            if (**argv == '-') {
+                printf("[ERROR]: Not known flag supplied\n");
+                help(out->prog_name);
+                return false;
+            } else if (out->input != NULL) {
+                printf("[ERROR]: Multiple input files provided\n");
+                help(out->prog_name);
+                return false;
+            } else {
+                out->input = *argv++; argc--;
+            }
+        }
+    }
+    return true;
 }
 
 void print_node(const Node* n, int indent) {
@@ -200,6 +262,10 @@ void print_node(const Node* n, int indent) {
             print_node(n->bin.l, indent + 1);
             print_node(n->bin.r, indent + 1);
             return;
+        }
+        case NT_RET: {
+            printf("Return: \n");
+            print_node(n->ret, indent + 1);
         }
     }
 }
@@ -225,18 +291,18 @@ bool parser_term(Parser* parser, Node* out) {
     if (!parser_factor(parser, out)) return false;
     while (!parser_empty(parser)) {
         Token t = {0};
-        if (!parser_expect_and_bump(parser, TT_OPERATOR, &t)) {
+        parser_peek(parser, &t);
+        if (t.type != TT_OPERATOR && (t.op != OT_PLUS || t.op != OT_MINUS)) {
             break;
         }
-        if (t.op == OT_PLUS || t.op == OT_MINUS) {
-            Node* left = arena_alloc(parser->arena, sizeof(Node));
-            *left = *out; // copy old expression into left
-            out->type = NT_BIN;
-            out->bin.l = left;
-            out->bin.op = t.op;
-            out->bin.r = arena_alloc(parser->arena, sizeof(Node));
-            if (!parser_factor(parser, out->bin.r)) return false;
-        }
+        parser_bump(parser, &t);
+        Node* left = arena_alloc(parser->arena, sizeof(Node));
+        *left = *out; // copy old expression into left
+        out->type = NT_BIN;
+        out->bin.l = left;
+        out->bin.op = t.op;
+        out->bin.r = arena_alloc(parser->arena, sizeof(Node));
+        if (!parser_factor(parser, out->bin.r)) return false;
     }
     return true;
 }
@@ -258,11 +324,33 @@ bool parser_primary(Parser* parser, Node* out) {
             out->number = t.number;
             return true;
         }
+        case TT_KEYWORD: {
+            switch (t.kw) {
+                case KT_NO: assert(false); break;
+                case KT_RETURN: {
+                    Token dummy;
+                    out->type = NT_RET;
+                    out->ret = NULL;
+
+                    out->ret = arena_alloc(parser->arena, sizeof(Node));
+                    if (!parser_expression(parser, out->ret)) return false;
+
+                    if (!parser_bump(parser, &dummy)) return false;
+
+                    return true;
+                }
+            }
+        }
         default: {
             printf("[ERROR]: Unexpected token in place of primary expression %d\n", t.type);
+            bong_error(parser->source, t.offset);
             return false;
         }
     }
+}
+
+Token parser_last_token(const Parser* parser) {
+    return parser->tokens->items[parser->pos - 1];
 }
 
 bool parser_expect_and_bump(Parser* parser, TokenType type, Token* out) {
@@ -272,6 +360,7 @@ bool parser_expect_and_bump(Parser* parser, TokenType type, Token* out) {
     if (out->type != type) {
         // TODO: Human readable token printing
         printf("[ERROR]: Expected token: %d, got: %d\n", type, out->type);
+        bong_error(parser->source, out->offset);
         return false;
     }
     return true;
@@ -281,7 +370,6 @@ bool parser_bump(Parser* parser, Token* out) {
         printf("[ERROR]: Tried to bump empty lexer\n");
         return false;
     }
-    parser->last_token = *out;
     parser->pos++;
     return true;
 }
@@ -304,10 +392,21 @@ void print_token(const Token* t) {
             printf("Number: %lu", t->number);
             break;
         }
+        case TT_SEMI: {
+            printf("Semicolon");
+            break;
+        }
         case TT_OPERATOR: {
             switch (t->op) {
                 case OT_PLUS: printf("Operator `+`"); break;
                 case OT_MINUS: printf("Operator `-`"); break;
+            }
+            break;
+        }
+        case TT_KEYWORD: {
+            switch (t->kw) {
+                case KT_RETURN: printf("Keyword: return"); break;
+                case KT_NO: assert(false && "Unreachable this keyword is never produced"); break;
             }
             break;
         }
@@ -316,9 +415,15 @@ void print_token(const Token* t) {
 
 bool lexer_run(Lexer* lexer, Tokens* out) {
     while (lexer_skip_ws(lexer), !lexer_done(lexer)) {
-        if (isalnum(lexer_peek(lexer))) {
+        if (isdigit(lexer_peek(lexer))) {
             Token t = {0};
             if (!lexer_number(lexer, &t)) return false;
+            da_push(out, t, lexer->arena);
+            continue;
+        }
+        if (isalpha(lexer_peek(lexer))) {
+            Token t = {0};
+            if (!lexer_kw_or_id(lexer, &t)) return false;
             da_push(out, t, lexer->arena);
             continue;
         }
@@ -334,24 +439,26 @@ bool lexer_run(Lexer* lexer, Tokens* out) {
             lexer_bump(lexer);
             continue;
         }
-        // We loooove lumps of code
-        // I don't want to over abstract this code so when I see the pattern I'll do so
+        if (lexer_peek(lexer) == ';') {
+            Token t = {.type = TT_SEMI, .offset = lexer->pos, .len = 1, .file = lexer->source};
+            da_push(out, t, lexer->arena);
+            lexer_bump(lexer);
+            continue;
+        }
         printf("[ERROR]: Unknown char found when lexing the source code: %c\n", lexer_peek(lexer));
-        Location loc = get_loc(lexer->source, lexer->pos);
-        printf("./%s:%zu:%zu\n", lexer->source->name, loc.line, loc.col);
-        ptrdiff_t begin = get_line_begin(lexer->source, lexer->pos);
-        printf("%.*s\n", (int)(get_line_end(lexer->source, lexer->pos) - begin), &lexer->source->content.items[begin]);
+        bong_error(lexer->source, lexer->pos);
         return false;
     }
 
     return true;
 }
 
+
 bool lexer_number(Lexer* lexer, Token* out) {
     out->offset = lexer->pos;
     out->type = TT_NUMBER;
     out->file = lexer->source;
-    while (!lexer_done(lexer) && isalnum(lexer_peek(lexer))) lexer_bump(lexer);
+    while (!lexer_done(lexer) && isdigit(lexer_peek(lexer))) lexer_bump(lexer);
     if (lexer_done(lexer)) {
         out->number = strtoull(lexer->source->content.items + out->offset, NULL, 10);
         out->len = lexer->pos - out->offset;
@@ -359,15 +466,32 @@ bool lexer_number(Lexer* lexer, Token* out) {
     }
     if (isalpha(lexer_peek(lexer))) {
         printf("[ERROR]: Non-separated number literal found\n");
-        Location loc = get_loc(lexer->source, lexer->pos);
-        printf("./%s:%zu:%zu\n", lexer->source->name, loc.line, loc.col);
-        ptrdiff_t begin = get_line_begin(lexer->source, lexer->pos);
-        printf("%.*s\n", (int)(get_line_end(lexer->source, lexer->pos) - begin), &lexer->source->content.items[begin]);
+        bong_error(lexer->source, lexer->pos);
         return false;
     }
     out->number = strtoull(lexer->source->content.items + out->offset, NULL, 10);
     out->len = lexer->pos - out->offset;
     return true;
+}
+
+bool lexer_kw_or_id(Lexer* lexer, Token* out) {
+    out->offset = lexer->pos;
+    out->file = lexer->source;
+    while (!lexer_done(lexer) && isalnum(lexer_peek(lexer))) lexer_bump(lexer);
+    out->kw = lexer_to_kw(lexer->source->content.items + out->offset, lexer->pos - out->offset);
+    if (!out->kw) {
+        printf("[ERROR]: No custom identifiers are supported\n");
+        return false;
+    }
+    out->type = TT_KEYWORD;
+    out->len = lexer->pos - out->offset;
+    return true;
+}
+
+KeywordType lexer_to_kw(const char* pos, size_t len) {
+    if (len == 6 && strncmp(pos, "return", 6) == 0) return KT_RETURN;
+
+    return KT_NO;
 }
 Location get_loc(const SourceFile* file, size_t offset) {
     Location l = {.line = 1, .col = 1};
@@ -391,11 +515,20 @@ ptrdiff_t get_line_begin(const SourceFile* file, size_t offset) {
 }
 
 ptrdiff_t get_line_end(const SourceFile* file, size_t offset) {
-    ptrdiff_t result = 0;
     for (int i = file->content.count - 1; i > offset && i > 0; i--) {
         if (file->content.items[i] == '\n') return i;
     }
+#ifdef DEBUG
+    printf("[DEBUG]: Tried to get invalid end of line offset in %s with offset %zu\n", file->name, offset);
+#endif
     return -1;
+}
+
+void bong_error(const SourceFile* source, size_t begin) {
+    Location loc = get_loc(source, begin);
+    printf("./%s:%zu:%zu\n", source->name, loc.line, loc.col);
+    ptrdiff_t l_begin = get_line_begin(source, begin);
+    printf("%.*s\n", (int)(get_line_end(source, begin) - l_begin), &source->content.items[l_begin]);
 }
 
 void lexer_skip_ws(Lexer* lexer) {
@@ -432,6 +565,9 @@ Arena arena_new(size_t size) {
 void* arena_alloc(Arena* a, size_t size) {
     assert(a->buffer);
     assert(a->used + size < a->capacity);
+#ifdef DEBUG
+    printf("[DEBUG]: Allocated %zu bytes when %zu is available\n", size, a->capacity - a->used);
+#endif
     void* buf = a->buffer + a->used;
     a->used += size;
     return buf;
@@ -471,6 +607,9 @@ bool read_entire_file(const char* path, SourceFile* f, Arena* arena) {
     fread(f->content.items, sizeof(char), size, file);
     f->content.capacity = size;
     f->content.count = size;
+#ifdef DEBUG
+    printf("[DEBUG]: Read file %s (size: %zu)\n", path, size);
+#endif
     fclose(file);
     return true;
 }
