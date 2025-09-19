@@ -194,6 +194,111 @@ ptrdiff_t get_line_begin(const SourceFile* file, size_t offset);
 ptrdiff_t get_line_end(const SourceFile* file, size_t offset);
 void bong_error(const SourceFile* source, size_t begin);
 
+// ---- IR ----
+// This contains all of the logic that should be treated as external (since I'll probably make this a separate library)
+// for generating final executables or other target files
+// NO internal logic of Bong should be here
+// When moving it out the da_append macro will only be an internal thing for this library
+typedef enum {
+    SHRIMP_IT_ADD,
+    SHRIMP_IT_ASSIGN,
+    SHRIMP_IT_RETURN,
+} Shrimp_InstrType;
+
+typedef enum {
+    SHRIMP_VK_CONST,
+    SHRIMP_VK_TEMP,
+} Shrimp_ValueKind;
+
+typedef uint64_t Shrimp_Temp;
+
+typedef struct {
+    Shrimp_ValueKind kind;
+    union {
+        uint64_t c;
+        Shrimp_Temp t;
+    };
+} Shrimp_Value;
+
+typedef struct {
+    Shrimp_InstrType t;
+    union {
+        Shrimp_Value ret;
+        struct {
+            Shrimp_Value v;
+            Shrimp_Temp into;
+        } assign;
+        struct {
+            Shrimp_Value l;
+            Shrimp_Value r;
+            Shrimp_Temp result;
+        } binop;
+    };
+} Shrimp_Instr;
+
+typedef struct {
+    const char* name;
+    size_t temp_count;
+    // body
+    size_t count;
+    size_t capacity;
+    Shrimp_Instr* items;
+} Shrimp_Function;
+
+typedef struct {
+    size_t count;
+    size_t capacity;
+    Shrimp_Function* items;
+    const char* name;
+} Shrimp_Module;
+
+typedef enum {
+    SHRIMP_TARGET_X86_64_NASM_LINUX,
+    SHRIMP_TARGET_COUNT
+} Shrimp_Target;
+
+typedef enum {
+    SHRIMP_OUTPUT_ASM,
+    SHRIMP_OUTPUT_OBJ,
+    SHRIMP_OUTPUT_EXE,
+} Shrimp_OutputKind;
+
+typedef enum {
+    SHRIMP_OPT_NONE    = 0,
+    /*
+        SHRIMP_OPT_INLINE  = 1,
+        SHRIMP_OPT_CONST_FOLD = 2,
+        SHRIMP_OPT_DEAD_CODE = 4,
+    */
+} Shrimp_OptFlags;
+
+typedef struct {
+    Shrimp_Target target;
+    Shrimp_OutputKind output_kind;
+    Shrimp_OptFlags opts;
+    // TODO: bool emit_debug_info;
+    const char* output_name;
+} Shrimp_CompOptions;
+
+// user facing code (generating the IR)
+Shrimp_Module Shrimp_module_new(const char* name);
+void Shrimp_module_cleanup(Shrimp_Module mod);
+Shrimp_Function* Shrimp_module_new_function(Shrimp_Module* mod, const char* name);
+void Shrimp_function_return(Shrimp_Function* func, Shrimp_Value value);
+Shrimp_Value Shrimp_function_add(Shrimp_Function* func, Shrimp_Value l, Shrimp_Value r);
+Shrimp_Value Shrimp_function_alloc_temp(Shrimp_Function* func);
+void Shrimp_function_assign_temp(Shrimp_Function* func, Shrimp_Value target, Shrimp_Value value);
+Shrimp_Value Shrimp_value_make_const(uint64_t num);
+
+void Shrimp_module_dump(FILE* file, Shrimp_Module mod);
+void Shrimp_value_dump(FILE* file, Shrimp_Value v);
+
+bool Shrimp_module_compile(const Shrimp_Module* mod, Shrimp_CompOptions opts);
+bool Shrimp_module_x86_64_nasm_linux_compile(const Shrimp_Module* mod, Shrimp_CompOptions opts);
+
+// codegen part ( TODO: add function to generate code according to the supported targets )
+bool Shrimp_module_x86_64_dump_nasm_mod(const Shrimp_Module* mod, FILE* file);
+void Shrimp_x86_64_nasm_mov_value_to_reg(const Shrimp_Value* value, const char* reg, FILE* out);
 
 int main(int argc, char** argv) {
     Arena arena = arena_new(1024 * 1024 * 8);
@@ -216,18 +321,268 @@ int main(int argc, char** argv) {
     };
     Nodes nodes = {0};
     if (!parser_parse(&p, &nodes)) return 1;
+    Shrimp_Module module = Shrimp_module_new("main");
+    Shrimp_Function* main_func = Shrimp_module_new_function(&module, "_start");
+
+    Shrimp_Value left = Shrimp_value_make_const(34);
+    Shrimp_Value right = Shrimp_value_make_const(35);
+    Shrimp_Value result = Shrimp_function_add(main_func, left, right);
+    Shrimp_function_return(main_func, result);
+
+    Shrimp_CompOptions opts = {
+        .target = SHRIMP_TARGET_X86_64_NASM_LINUX,
+        .output_kind = SHRIMP_OUTPUT_EXE,
+        .output_name = module.name
+    };
+    if (!Shrimp_module_compile(&module, opts)) return false;
 }
 
 static void help(const char* prog_name) {
-    printf("%s [OPTIONS] <input.bg>\n", prog_name);
-    printf("OPTIONS:\n");
-    printf("  -help: Prints this help message");
+    fprintf(stderr, "%s [OPTIONS] <input.bg>\n", prog_name);
+    fprintf(stderr, "OPTIONS:\n");
+    fprintf(stderr, "  -help: Prints this help message");
+}
+
+#define SHRIMP_DA_INIT_CAP 16
+#define Shrimp_da_push(arr, item) do { \
+    if ((arr)->capacity == 0) {\
+        (arr)->capacity = DA_INIT_CAP;\
+        (arr)->items = malloc(sizeof(*(arr)->items) * (arr)->capacity);\
+    }\
+    if ((arr)->count >= (arr)->capacity) {\
+        (arr)->capacity *= 1.5; \
+        (arr)->items = realloc((arr)->items, (arr)->capacity); \
+    }\
+    (arr)->items[(arr)->count++] = (item);\
+} while (false)
+
+Shrimp_Module Shrimp_module_new(const char* name) {
+    return (Shrimp_Module){.name = name};
+}
+
+bool Shrimp_module_compile(const Shrimp_Module* mod, Shrimp_CompOptions opts) {
+    switch (opts.target) {
+        case SHRIMP_TARGET_X86_64_NASM_LINUX: return Shrimp_module_x86_64_nasm_linux_compile(mod, opts);
+        default: {
+            fprintf(stderr, "[ERROR]: Unknown target %d\n", opts.target);
+            return false;
+        }
+    }
+    return true;
+}
+
+bool Shrimp_module_x86_64_nasm_linux_compile(const Shrimp_Module* mod, Shrimp_CompOptions opts) {
+    char asm_path[256] = {0};
+    char o_path[256] = {0};
+    snprintf(asm_path, sizeof(asm_path), "%s.asm", opts.output_name);
+    snprintf(o_path, sizeof(o_path), "%s.o", opts.output_name);
+
+    FILE* asm_file = fopen(asm_path, "wb");
+
+    if (!Shrimp_module_x86_64_dump_nasm_mod(mod, asm_file)) {
+        fprintf(stderr, "[ERROR]: Failed to generate assembly\n");
+        return false;
+    }
+
+    fclose(asm_file);
+
+    if (opts.output_kind == SHRIMP_OUTPUT_ASM) {
+        fprintf(stderr, "[INFO]: Generated %s\n", asm_path);
+        return true;
+    }
+
+    // TODO: Don't use system here
+    char command_buffer[256] = {0};
+    snprintf(command_buffer, sizeof(command_buffer), "nasm %s -felf64 -o %s", asm_path, o_path);
+    system(command_buffer);
+
+    if (opts.output_kind == SHRIMP_OUTPUT_OBJ) {
+        fprintf(stderr, "[INFO]: Generated %s\n", o_path);
+        return true;
+    }
+    memset(command_buffer, 0, sizeof(command_buffer));
+    snprintf(command_buffer, sizeof(command_buffer), "ld %s -o %s", o_path, opts.output_name);
+    system(command_buffer);
+    fprintf(stderr, "[INFO]: Generated %s\n", opts.output_name);
+    return true;
+}
+
+void Shrimp_module_dump(FILE* file, Shrimp_Module mod) {
+    for (size_t i = 0; i < mod.count; i++) {
+        const Shrimp_Function* func = &mod.items[i];
+        fprintf(file, "func %s() {\n", func->name);
+        for (size_t j = 0; j < func->count; j++) {
+            const Shrimp_Instr* instr = &func->items[j];
+            fprintf(file, "  ");
+            switch (instr->t) {
+                case SHRIMP_IT_ADD: {
+                    fprintf(file, "$%zu <- ", instr->binop.result);
+                    Shrimp_value_dump(file, instr->binop.l);
+                    fprintf(file, " + ");
+                    Shrimp_value_dump(file, instr->binop.r);
+                    break;
+                }
+                case SHRIMP_IT_ASSIGN: {
+                    fprintf(file, "$%zu <- ", instr->assign.into);
+                    Shrimp_value_dump(file, instr->assign.v);
+                    break;
+                }
+                case SHRIMP_IT_RETURN: {
+                    fprintf(file, "return ");
+                    Shrimp_value_dump(file, instr->ret);
+                    break;
+                }
+            }
+            fprintf(file, "\n");
+        }
+        fprintf(file, "}\n");
+    }
+}
+
+void Shrimp_value_dump(FILE* file, Shrimp_Value v) {
+    switch (v.kind) {
+        case SHRIMP_VK_CONST: {
+            fprintf(file, "%zu", v.c);
+            break;
+        }
+        case SHRIMP_VK_TEMP: {
+            fprintf(file, "$%zu", v.t);
+            break;
+        }
+    }
+}
+
+void Shrimp_module_cleanup(Shrimp_Module mod) {
+    if (mod.items != NULL) free(mod.items);
+}
+
+Shrimp_Function* Shrimp_module_new_function(Shrimp_Module* mod, const char* name) {
+    Shrimp_Function f = {.name = name};
+    Shrimp_da_push(mod, f);
+    return &mod->items[mod->count-1];
+}
+
+void Shrimp_function_return(Shrimp_Function* func, Shrimp_Value value) {
+    Shrimp_Instr instr = {
+        .t = SHRIMP_IT_RETURN,
+        .ret = value
+    };
+    Shrimp_da_push(func, instr);
+}
+Shrimp_Value Shrimp_function_add(Shrimp_Function* func, Shrimp_Value l, Shrimp_Value r) {
+    Shrimp_Value result = Shrimp_function_alloc_temp(func);
+    Shrimp_Instr instr = {
+        .t = SHRIMP_IT_ADD,
+        .binop = {
+            .l = l,
+            .r = r,
+            .result = result.t
+        }
+    };
+    Shrimp_da_push(func, instr);
+
+    return result;
+}
+Shrimp_Value Shrimp_function_alloc_temp(Shrimp_Function* func) {
+    return (Shrimp_Value) {
+        .kind = SHRIMP_VK_TEMP,
+        .t = func->temp_count++
+    };
+}
+
+Shrimp_Value Shrimp_value_make_const(uint64_t num) {
+    return (Shrimp_Value){
+        .kind = SHRIMP_VK_CONST,
+        .c = num
+    };
+}
+void Shrimp_function_assign_temp(Shrimp_Function* func, Shrimp_Value target, Shrimp_Value value) {
+    assert(target.kind == SHRIMP_VK_TEMP);
+    Shrimp_Instr instr = {
+        .t = SHRIMP_IT_ASSIGN,
+        .assign = {
+            .v = value,
+            .into = value.t
+        }
+    };
+    Shrimp_da_push(func, instr);
+}
+
+bool Shrimp_module_x86_64_dump_nasm_mod(const Shrimp_Module* mod, FILE* file) {
+    for (size_t i = 0; i < mod->count; i++) {
+        fprintf(file, "section .text\n");
+        fprintf(file, "global _start\n");
+        const Shrimp_Function* f = &mod->items[i];
+        fprintf(file, "%s:\n", f->name);
+        fprintf(file, "  push rbp\n");
+        fprintf(file, "  mov rbp, rsp\n");
+        fprintf(file, "  sub rsp, %zu\n", f->temp_count * 8);
+
+        // store callee saved registers according to the x86_64 sysV AMD64 abi
+        fprintf(file, "  push rbx\n");
+        fprintf(file, "  push r12\n");
+        fprintf(file, "  push r13\n");
+        fprintf(file, "  push r14\n");
+        fprintf(file, "  push r15\n");
+
+        for (size_t j = 0; j < f->count; j++) {
+            const Shrimp_Instr* instr = &f->items[j];
+            switch (instr->t) {
+                case SHRIMP_IT_ADD: {
+                    fprintf(file, "  mov qword [rbp - %zu], 0\n", (instr->binop.result + 1) * 8);
+                    Shrimp_x86_64_nasm_mov_value_to_reg(&instr->binop.l, "r10", file);
+                    Shrimp_x86_64_nasm_mov_value_to_reg(&instr->binop.r, "r11", file);
+                    fprintf(file, "  add [rbp - %zu], r10\n", (instr->binop.result + 1) * 8);
+                    fprintf(file, "  add [rbp - %zu], r11\n", (instr->binop.result + 1) * 8);
+                    break;
+                }
+                case SHRIMP_IT_ASSIGN: {
+                    Shrimp_x86_64_nasm_mov_value_to_reg(&instr->assign.v, "r10", file);
+                    fprintf(file, "  mov [rbp - %zu], r10\n", (instr->assign.into + 1) * 8);
+                    break;
+                }
+                case SHRIMP_IT_RETURN: {
+                    Shrimp_x86_64_nasm_mov_value_to_reg(&instr->ret, "rax", file);
+                    fprintf(file, "  jmp .exit\n");
+                    break;
+                }
+            }
+        }
+        fprintf(file, "  .exit:\n");
+
+        fprintf(file, "  pop r15\n");
+        fprintf(file, "  pop r14\n");
+        fprintf(file, "  pop r13\n");
+        fprintf(file, "  pop r12\n");
+        fprintf(file, "  pop rbx\n");
+
+        fprintf(file, "  mov rsp, rbp\n");
+        fprintf(file, "  pop rbp\n");
+        fprintf(file, "  mov rdi, rax\n");
+        fprintf(file, "  mov rax, 60\n");
+        fprintf(file, "  syscall\n");
+    }
+    return true;
+}
+
+void Shrimp_x86_64_nasm_mov_value_to_reg(const Shrimp_Value* value, const char* reg, FILE* out) {
+    fprintf(out, "  mov %s, ", reg);
+    switch(value->kind) {
+        case SHRIMP_VK_TEMP: {
+            fprintf(out, "[rbp - %zu]\n", (value->t + 1) * 8);
+            break;
+        }
+        case SHRIMP_VK_CONST: {
+            fprintf(out, "%zu\n", value->c);
+            break;
+        }
+    }
 }
 
 bool parse_config(int argc, char** argv, Config* out) {
     out->prog_name = *argv++; argc--;
     if (argc == 0) {
-        printf("[ERROR]: No flags/inputs/subcommands provided\n");
+        fprintf(stderr, "[ERROR]: No flags/inputs/subcommands provided\n");
         help(out->prog_name);
         exit(0);
     }
@@ -237,11 +592,11 @@ bool parse_config(int argc, char** argv, Config* out) {
             exit(0);
         } else {
             if (**argv == '-') {
-                printf("[ERROR]: Not known flag supplied\n");
+                fprintf(stderr, "[ERROR]: Not known flag supplied\n");
                 help(out->prog_name);
                 return false;
             } else if (out->input != NULL) {
-                printf("[ERROR]: Multiple input files provided\n");
+                fprintf(stderr, "[ERROR]: Multiple input files provided\n");
                 help(out->prog_name);
                 return false;
             } else {
@@ -255,7 +610,7 @@ bool parse_config(int argc, char** argv, Config* out) {
 void print_node(const Node* n, int indent) {
     switch (n->type) {
         case NT_NUMBER: {
-            printf("%.*s%zu\n", indent * 2, " ", n->number);
+            fprintf(stderr, "%.*s%zu\n", indent * 2, " ", n->number);
             return;
         }
         case NT_BIN: {
@@ -264,7 +619,7 @@ void print_node(const Node* n, int indent) {
             return;
         }
         case NT_RET: {
-            printf("Return: \n");
+            fprintf(stderr, "Return: \n");
             print_node(n->ret, indent + 1);
         }
     }
@@ -292,7 +647,7 @@ bool parser_term(Parser* parser, Node* out) {
     while (!parser_empty(parser)) {
         Token t = {0};
         parser_peek(parser, &t);
-        if (t.type != TT_OPERATOR && (t.op != OT_PLUS || t.op != OT_MINUS)) {
+        if (t.type != TT_OPERATOR || (t.op != OT_PLUS && t.op != OT_MINUS)) {
             break;
         }
         parser_bump(parser, &t);
@@ -315,7 +670,7 @@ bool parser_unary(Parser* parser, Node* out) {
 bool parser_primary(Parser* parser, Node* out) {
     Token t = {0};
     if (!parser_bump(parser, &t)) {
-        printf("[ERROR]: Missing expression\n");
+        fprintf(stderr, "[ERROR]: Missing expression\n");
         return false;
     }
     switch (t.type) {
@@ -340,9 +695,10 @@ bool parser_primary(Parser* parser, Node* out) {
                     return true;
                 }
             }
+            break;
         }
         default: {
-            printf("[ERROR]: Unexpected token in place of primary expression %d\n", t.type);
+            fprintf(stderr, "[ERROR]: Unexpected token in place of primary expression %d\n", t.type);
             bong_error(parser->source, t.offset);
             return false;
         }
@@ -359,7 +715,7 @@ bool parser_expect_and_bump(Parser* parser, TokenType type, Token* out) {
     }
     if (out->type != type) {
         // TODO: Human readable token printing
-        printf("[ERROR]: Expected token: %d, got: %d\n", type, out->type);
+        fprintf(stderr, "[ERROR]: Expected token: %d, got: %d\n", type, out->type);
         bong_error(parser->source, out->offset);
         return false;
     }
@@ -367,7 +723,7 @@ bool parser_expect_and_bump(Parser* parser, TokenType type, Token* out) {
 }
 bool parser_bump(Parser* parser, Token* out) {
     if (!parser_peek(parser, out)) {
-        printf("[ERROR]: Tried to bump empty lexer\n");
+        fprintf(stderr, "[ERROR]: Tried to bump empty lexer\n");
         return false;
     }
     parser->pos++;
@@ -375,7 +731,7 @@ bool parser_bump(Parser* parser, Token* out) {
 }
 bool parser_peek(const Parser* parser, Token* out) {
     if (parser_empty(parser)) {
-        printf("[ERROR]: Tried to peek empty lexer\n");
+        fprintf(stderr, "[ERROR]: Tried to peek empty lexer\n");
         return false;
     }
     *out = parser->tokens->items[parser->pos];
@@ -389,23 +745,23 @@ bool parser_empty(const Parser* parser) {
 void print_token(const Token* t) {
     switch (t->type) {
         case TT_NUMBER: {
-            printf("Number: %lu", t->number);
+            fprintf(stderr, "Number: %lu", t->number);
             break;
         }
         case TT_SEMI: {
-            printf("Semicolon");
+            fprintf(stderr, "Semicolon");
             break;
         }
         case TT_OPERATOR: {
             switch (t->op) {
-                case OT_PLUS: printf("Operator `+`"); break;
-                case OT_MINUS: printf("Operator `-`"); break;
+                case OT_PLUS: fprintf(stderr, "Operator `+`"); break;
+                case OT_MINUS: fprintf(stderr, "Operator `-`"); break;
             }
             break;
         }
         case TT_KEYWORD: {
             switch (t->kw) {
-                case KT_RETURN: printf("Keyword: return"); break;
+                case KT_RETURN: fprintf(stderr, "Keyword: return"); break;
                 case KT_NO: assert(false && "Unreachable this keyword is never produced"); break;
             }
             break;
@@ -445,7 +801,7 @@ bool lexer_run(Lexer* lexer, Tokens* out) {
             lexer_bump(lexer);
             continue;
         }
-        printf("[ERROR]: Unknown char found when lexing the source code: %c\n", lexer_peek(lexer));
+        fprintf(stderr, "[ERROR]: Unknown char found when lexing the source code: %c\n", lexer_peek(lexer));
         bong_error(lexer->source, lexer->pos);
         return false;
     }
@@ -465,7 +821,7 @@ bool lexer_number(Lexer* lexer, Token* out) {
         return true;
     }
     if (isalpha(lexer_peek(lexer))) {
-        printf("[ERROR]: Non-separated number literal found\n");
+        fprintf(stderr, "[ERROR]: Non-separated number literal found\n");
         bong_error(lexer->source, lexer->pos);
         return false;
     }
@@ -480,7 +836,7 @@ bool lexer_kw_or_id(Lexer* lexer, Token* out) {
     while (!lexer_done(lexer) && isalnum(lexer_peek(lexer))) lexer_bump(lexer);
     out->kw = lexer_to_kw(lexer->source->content.items + out->offset, lexer->pos - out->offset);
     if (!out->kw) {
-        printf("[ERROR]: No custom identifiers are supported\n");
+        fprintf(stderr, "[ERROR]: No custom identifiers are supported\n");
         return false;
     }
     out->type = TT_KEYWORD;
@@ -519,16 +875,16 @@ ptrdiff_t get_line_end(const SourceFile* file, size_t offset) {
         if (file->content.items[i] == '\n') return i;
     }
 #ifdef DEBUG
-    printf("[DEBUG]: Tried to get invalid end of line offset in %s with offset %zu\n", file->name, offset);
+    fprintf(stderr, "[DEBUG]: Tried to get invalid end of line offset in %s with offset %zu\n", file->name, offset);
 #endif
     return -1;
 }
 
 void bong_error(const SourceFile* source, size_t begin) {
     Location loc = get_loc(source, begin);
-    printf("./%s:%zu:%zu\n", source->name, loc.line, loc.col);
+    fprintf(stderr, "./%s:%zu:%zu\n", source->name, loc.line, loc.col);
     ptrdiff_t l_begin = get_line_begin(source, begin);
-    printf("%.*s\n", (int)(get_line_end(source, begin) - l_begin), &source->content.items[l_begin]);
+    fprintf(stderr, "%.*s\n", (int)(get_line_end(source, begin) - l_begin), &source->content.items[l_begin]);
 }
 
 void lexer_skip_ws(Lexer* lexer) {
@@ -537,14 +893,14 @@ void lexer_skip_ws(Lexer* lexer) {
 
 char lexer_bump(Lexer* lexer) {
     if (lexer_done(lexer)) {
-        printf("[ERROR]: Tried to bump empty lexer\n");
+        fprintf(stderr, "[ERROR]: Tried to bump empty lexer\n");
         return 0;
     }
     return lexer->source->content.items[lexer->pos++];
 }
 char lexer_peek(const Lexer* lexer) {
     if (lexer_done(lexer)) {
-        printf("[ERROR]: Tried to peek empty lexer\n");
+        fprintf(stderr, "[ERROR]: Tried to peek empty lexer\n");
         return 0;
     }
     return lexer->source->content.items[lexer->pos];
@@ -566,7 +922,7 @@ void* arena_alloc(Arena* a, size_t size) {
     assert(a->buffer);
     assert(a->used + size < a->capacity);
 #ifdef DEBUG
-    printf("[DEBUG]: Allocated %zu bytes when %zu is available\n", size, a->capacity - a->used);
+    fprintf(stderr, "[DEBUG]: Allocated %zu bytes when %zu is available\n", size, a->capacity - a->used);
 #endif
     void* buf = a->buffer + a->used;
     a->used += size;
@@ -608,7 +964,7 @@ bool read_entire_file(const char* path, SourceFile* f, Arena* arena) {
     f->content.capacity = size;
     f->content.count = size;
 #ifdef DEBUG
-    printf("[DEBUG]: Read file %s (size: %zu)\n", path, size);
+    fprintf(stderr, "[DEBUG]: Read file %s (size: %zu)\n", path, size);
 #endif
     fclose(file);
     return true;
