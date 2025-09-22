@@ -265,11 +265,11 @@ typedef enum {
 } Shrimp_OutputKind;
 
 typedef enum {
-    SHRIMP_OPT_NONE    = 0,
-    /*
-        SHRIMP_OPT_INLINE  = 1,
-        SHRIMP_OPT_CONST_FOLD = 2,
-        SHRIMP_OPT_DEAD_CODE = 4,
+    SHRIMP_OPT_NONE       = 0,
+    SHRIMP_OPT_CONST_FOLD = 1,
+    /* TODO
+    SHRIMP_OPT_DEAD_CODE  = 2,
+    SHRIMP_OPT_INLINE     = 4,
     */
 } Shrimp_OptFlags;
 
@@ -296,12 +296,18 @@ void Shrimp_module_dump(FILE* file, Shrimp_Module mod);
 void Shrimp_value_dump(FILE* file, Shrimp_Value v);
 
 bool Shrimp_module_verify(const Shrimp_Module* mod);
-bool Shrimp_module_compile(const Shrimp_Module* mod, Shrimp_CompOptions opts);
+bool Shrimp_module_compile(Shrimp_Module* mod, Shrimp_CompOptions opts);
+void Shrimp_module_optimize(Shrimp_Module* mod, Shrimp_CompOptions opts);
+void Shrimp_module_const_fold(Shrimp_Module* mod);
 bool Shrimp_module_x86_64_nasm_linux_compile(const Shrimp_Module* mod, Shrimp_CompOptions opts);
 
 // codegen part ( TODO: add function to generate code according to the supported targets )
 bool Shrimp_module_x86_64_dump_nasm_mod(const Shrimp_Module* mod, FILE* file);
 void Shrimp_x86_64_nasm_mov_value_to_reg(const Shrimp_Value* value, const char* reg, FILE* out);
+
+bool generate_mod(Nodes* nodes, Shrimp_Module* out);
+Shrimp_Value generate_expr(const Node* n, Shrimp_Function* out);
+
 
 int main(int argc, char** argv) {
     Arena arena = arena_new(1024 * 1024 * 8);
@@ -324,27 +330,65 @@ int main(int argc, char** argv) {
     };
     Nodes nodes = {0};
     if (!parser_parse(&p, &nodes)) return 1;
-    Shrimp_Module module = Shrimp_module_new("main");
-    Shrimp_Function* main_func = Shrimp_module_new_function(&module, "_start");
-
-    Shrimp_Value left = Shrimp_value_make_const(34);
-    Shrimp_Value right = Shrimp_value_make_const(35);
-    Shrimp_Value result = Shrimp_function_add(main_func, left, right);
-    Shrimp_function_return(main_func, result);
-
+    Shrimp_Module mod = Shrimp_module_new("main");
+    if (!generate_mod(&nodes, &mod)) return false;
     Shrimp_CompOptions opts = {
         .target = SHRIMP_TARGET_X86_64_NASM_LINUX,
+        .opts = SHRIMP_OPT_CONST_FOLD,
         .output_kind = SHRIMP_OUTPUT_EXE,
-        .output_name = module.name
+        .output_name = mod.name
     };
-    if (!Shrimp_module_verify(&module)) return false;
-    if (!Shrimp_module_compile(&module, opts)) return false;
+    if (!Shrimp_module_compile(&mod, opts)) return false;
+    Shrimp_module_dump(stdout, mod);
 }
 
 static void help(const char* prog_name) {
     fprintf(stderr, "%s [OPTIONS] <input.bg>\n", prog_name);
     fprintf(stderr, "OPTIONS:\n");
     fprintf(stderr, "  -help: Prints this help message");
+}
+
+bool generate_mod(Nodes* nodes, Shrimp_Module* out) {
+    *out = Shrimp_module_new("main");
+    Shrimp_Function* main_func = Shrimp_module_new_function(out, "_start");
+    for (size_t i = 0; i < nodes->count; i++) {
+        switch (nodes->items[i].type) {
+            case NT_RET: {
+                Shrimp_Value value = generate_expr(nodes->items[i].ret, main_func);
+                Shrimp_function_return(main_func, value);
+                break;
+            }
+            case NT_BIN: case NT_NUMBER: {
+                fprintf(stderr, "No implicit return\n");
+                break;
+            }
+        }
+    }
+    if (!Shrimp_module_verify(out)) return false;
+    return true;
+}
+
+Shrimp_Value generate_expr(const Node* n, Shrimp_Function* out) {
+    switch (n->type) {
+        case NT_NUMBER: {
+            return Shrimp_value_make_const(n->number);
+        }
+        case NT_BIN: {
+            Shrimp_Value l = generate_expr(n->bin.l, out);
+            Shrimp_Value r = generate_expr(n->bin.r, out);
+            switch (n->bin.op) {
+                case OT_PLUS: {
+                    return Shrimp_function_add(out, l, r);
+                }
+                case OT_MINUS: {
+                    return Shrimp_function_sub(out, l, r);
+                }
+            }
+        }
+        case NT_RET: {
+            return generate_expr(n->ret, out);
+        }
+    }
 }
 
 #define SHRIMP_DA_INIT_CAP 16
@@ -364,7 +408,9 @@ Shrimp_Module Shrimp_module_new(const char* name) {
     return (Shrimp_Module){.name = name};
 }
 
-bool Shrimp_module_compile(const Shrimp_Module* mod, Shrimp_CompOptions opts) {
+bool Shrimp_module_compile(Shrimp_Module* mod, Shrimp_CompOptions opts) {
+    if (!Shrimp_module_verify(mod)) return false;
+    if (opts.opts) Shrimp_module_optimize(mod, opts);
     switch (opts.target) {
         case SHRIMP_TARGET_X86_64_NASM_LINUX: return Shrimp_module_x86_64_nasm_linux_compile(mod, opts);
         default: {
@@ -373,6 +419,129 @@ bool Shrimp_module_compile(const Shrimp_Module* mod, Shrimp_CompOptions opts) {
         }
     }
     return true;
+}
+
+void Shrimp_module_optimize(Shrimp_Module* mod, Shrimp_CompOptions opts) {
+    if (opts.opts & SHRIMP_OPT_CONST_FOLD) Shrimp_module_const_fold(mod);
+}
+
+typedef struct {
+    Shrimp_Temp idx;
+    uint64_t value;
+} IndexValuePair;
+
+typedef struct {
+    IndexValuePair* items;
+    size_t count;
+    size_t capacity;
+} IndexValuePairs;
+
+IndexValuePair* find_pair(const IndexValuePairs* pairs, Shrimp_Value value) {
+    if (value.kind == SHRIMP_VK_CONST) return NULL;
+    for (size_t i = 0; i < pairs->count; i++) {
+        if (pairs->items[i].idx == value.t) {
+            return &pairs->items[i];
+        }
+    }
+    return NULL;
+}
+
+void Shrimp_module_const_fold(Shrimp_Module* mod) {
+    for (size_t f_i = 0; f_i < mod->count; f_i++) {
+        Shrimp_Function* f = &mod->items[f_i];
+        IndexValuePairs pairs = {0};
+        for (size_t i_i = 0; i_i < f->count; i_i++) {
+            Shrimp_Instr* instr = &f->items[i_i];
+            switch (instr->t) {
+                case SHRIMP_IT_ASSIGN: {
+                    if (instr->assign.v.kind == SHRIMP_VK_CONST) {
+                        IndexValuePair p = {
+                            .idx = instr->assign.into,
+                            .value = instr->assign.v.c,
+                        };
+                        Shrimp_da_push(&pairs, p);
+                        break;
+                    }
+                    IndexValuePair* p = find_pair(&pairs, instr->assign.v);
+                    if (p && instr->assign.v.kind != SHRIMP_VK_CONST) {
+                        instr->assign.v = (Shrimp_Value) {
+                            .kind = SHRIMP_VK_CONST,
+                            .c = p->value
+                        };
+                    }
+                    break;
+                }
+                case SHRIMP_IT_RETURN: {
+                    IndexValuePair* p = find_pair(&pairs, instr->ret);
+                    if (p && instr->ret.kind != SHRIMP_VK_CONST) {
+                        instr->ret = (Shrimp_Value) {
+                            .kind = SHRIMP_VK_CONST,
+                            .c = p->value
+                        };
+                    }
+                    break;
+                }
+                case SHRIMP_IT_ADD: {
+                    bool l_const = instr->binop.l.kind == SHRIMP_VK_CONST;
+                    bool r_const = instr->binop.r.kind == SHRIMP_VK_CONST;
+
+                    IndexValuePair* l_pair = l_const ? NULL : find_pair(&pairs, instr->binop.l);
+                    IndexValuePair* r_pair = r_const ? NULL : find_pair(&pairs, instr->binop.r);
+
+                    const size_t* l_val = l_const ? &instr->binop.l.c : (l_pair ? &l_pair->value : NULL);
+                    const size_t* r_val = r_const ? &instr->binop.r.c : (r_pair ? &r_pair->value : NULL);
+
+                    if (l_val && r_val && instr->t != SHRIMP_IT_ASSIGN) {
+                        *instr = (Shrimp_Instr) {
+                            .t = SHRIMP_IT_ASSIGN,
+                            .assign = {
+                                .into = instr->binop.result,
+                                .v = {
+                                    .kind = SHRIMP_VK_CONST,
+                                    .c = *l_val + *r_val
+                                }
+                            }
+                        };
+                        IndexValuePair p =  {
+                            .value = *l_val + *r_val,
+                            .idx = instr->assign.into
+                        };
+                        Shrimp_da_push(&pairs, p);
+                    }
+                    break;
+                }
+                case SHRIMP_IT_SUB: {
+                    bool l_const = instr->binop.l.kind == SHRIMP_VK_CONST;
+                    bool r_const = instr->binop.r.kind == SHRIMP_VK_CONST;
+
+                    IndexValuePair* l_pair = l_const ? NULL : find_pair(&pairs, instr->binop.l);
+                    IndexValuePair* r_pair = r_const ? NULL : find_pair(&pairs, instr->binop.r);
+
+                    const size_t* l_val = l_const ? &instr->binop.l.c : (l_pair ? &l_pair->value : NULL);
+                    const size_t* r_val = r_const ? &instr->binop.r.c : (r_pair ? &r_pair->value : NULL);
+
+                    if (l_val && r_val && instr->t != SHRIMP_IT_ASSIGN) {
+                        *instr = (Shrimp_Instr) {
+                            .t = SHRIMP_IT_ASSIGN,
+                            .assign = {
+                                .into = instr->binop.result,
+                                .v = {
+                                    .kind = SHRIMP_VK_CONST,
+                                    .c = *l_val - *r_val
+                                }
+                            }
+                        };
+                        IndexValuePair p =  {
+                            .value = *l_val - *r_val,
+                            .idx = instr->assign.into
+                        };
+                        Shrimp_da_push(&pairs, p);
+                    }
+                    break;
+                }
+            }
+        }
+    }
 }
 
 bool Shrimp_module_verify(const Shrimp_Module* mod) {
@@ -389,12 +558,14 @@ bool Shrimp_module_verify(const Shrimp_Module* mod) {
                         fprintf(stderr, "[Shrimp: Module %s, function %s, verification failure]: Result of add instruction cannot be a non-temporary value\n", mod->name, func->name);
                         return false;
                     }
+                    break;
                 }
                 case SHRIMP_IT_ASSIGN: {
                     if (ins->assign.into >= func->temp_count) {
                         fprintf(stderr, "[Shrimp: Module %s, function %s, verification failure]: Place of assign instruction cannot be a non-temporary value\n", mod->name, func->name);
                         return false;
                     }
+                    break;
                 }
             }
         }
@@ -423,7 +594,7 @@ bool Shrimp_module_x86_64_nasm_linux_compile(const Shrimp_Module* mod, Shrimp_Co
     }
 
     // TODO: Don't use system here
-    char command_buffer[256] = {0};
+    char command_buffer[1024] = {0};
     snprintf(command_buffer, sizeof(command_buffer), "nasm %s -felf64 -o %s", asm_path, o_path);
     system(command_buffer);
 
@@ -765,6 +936,7 @@ bool parser_primary(Parser* parser, Node* out) {
             return false;
         }
     }
+    return false;
 }
 
 Token parser_last_token(const Parser* parser) {
@@ -933,7 +1105,7 @@ ptrdiff_t get_line_begin(const SourceFile* file, size_t offset) {
 }
 
 ptrdiff_t get_line_end(const SourceFile* file, size_t offset) {
-    for (int i = file->content.count - 1; i > offset && i > 0; i--) {
+    for (size_t i = file->content.count - 1; i > offset && i > 0; i--) {
         if (file->content.items[i] == '\n') return i;
     }
 #ifdef DEBUG
