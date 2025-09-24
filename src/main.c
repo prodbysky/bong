@@ -127,39 +127,48 @@ typedef struct {
     size_t pos;
 } Parser;
 
-typedef enum {
-    NT_NUMBER,
-    NT_BIN,
-    // first statement like expression, which results in the last expression in a block
-    // OR an explicit return <value>;
-    // also all of these subexpressions are of primary binding power so they are the same as numbers, ids, ...
-    NT_RET,
-} NodeType;
 
-typedef struct Node {
-    NodeType type;
+typedef enum {
+    ET_NUMBER,
+    ET_BIN,
+} ExprType;
+
+typedef enum {
+    ST_RET
+} StmtType;
+
+typedef struct Expr {
+    ExprType type;
     union {
         uint64_t number;
         struct {
-            struct Node* l;
-            struct Node* r;
+            struct Expr* l;
+            struct Expr* r;
             OperatorType op;
         } bin;
-        struct Node* ret;
     };
-} Node;
+} Expr;
+
+typedef struct Stmt {
+    StmtType type;
+    union {
+        Expr ret;
+    };
+} Stmt;
 
 typedef struct {
-    Node* items;
+    Stmt* items;
     size_t count;
     size_t capacity;
-} Nodes;
+} Body;
 
-bool parser_parse(Parser* parser, Nodes* out);
+bool parser_parse(Parser* parser, Body* out);
 bool parser_peek(const Parser* parser, Token* out);
 bool parser_bump(Parser* parser, Token* out);
 bool parser_expect_and_bump(Parser* parser, TokenType type, Token* out);
 bool parser_empty(const Parser* parser);
+
+bool parser_stmt(Parser* parser, Stmt* out);
 /*
     Ref: Crafting interpreters page 80
     expression → equality ;
@@ -172,15 +181,14 @@ bool parser_empty(const Parser* parser);
     primary → NUMBER | STRING | "true" | "false"
     | "(" expression ")" ;
 */
-bool parser_expression(Parser* parser, Node* out);
-bool parser_eq(Parser* parser, Node* out);
-bool parser_cmp(Parser* parser, Node* out);
-bool parser_term(Parser* parser, Node* out);
-bool parser_factor(Parser* parser, Node* out);
-bool parser_unary(Parser* parser, Node* out);
-bool parser_primary(Parser* parser, Node* out);
+bool parser_expression(Parser* parser, Expr* out);
+bool parser_eq(Parser* parser, Expr* out);
+bool parser_cmp(Parser* parser, Expr* out);
+bool parser_term(Parser* parser, Expr* out);
+bool parser_factor(Parser* parser, Expr* out);
+bool parser_unary(Parser* parser, Expr* out);
+bool parser_primary(Parser* parser, Expr* out);
 Token parser_last_token(const Parser* parser);
-void print_node(const Node* n, int indent);
 
 
 // ---- Errors (locations) ----
@@ -305,8 +313,8 @@ bool Shrimp_module_x86_64_nasm_linux_compile(const Shrimp_Module* mod, Shrimp_Co
 bool Shrimp_module_x86_64_dump_nasm_mod(const Shrimp_Module* mod, FILE* file);
 void Shrimp_x86_64_nasm_mov_value_to_reg(const Shrimp_Value* value, const char* reg, FILE* out);
 
-bool generate_mod(Nodes* nodes, Shrimp_Module* out);
-Shrimp_Value generate_expr(const Node* n, Shrimp_Function* out);
+bool generate_mod(Body* nodes, Shrimp_Module* out);
+Shrimp_Value generate_expr(const Expr* n, Shrimp_Function* out);
 
 
 int main(int argc, char** argv) {
@@ -328,7 +336,7 @@ int main(int argc, char** argv) {
         .source = &file,
         .tokens = &tokens,
     };
-    Nodes nodes = {0};
+    Body nodes = {0};
     if (!parser_parse(&p, &nodes)) return 1;
     Shrimp_Module mod = Shrimp_module_new("main");
     if (!generate_mod(&nodes, &mod)) return false;
@@ -348,18 +356,14 @@ static void help(const char* prog_name) {
     fprintf(stderr, "  -help: Prints this help message");
 }
 
-bool generate_mod(Nodes* nodes, Shrimp_Module* out) {
+bool generate_mod(Body* nodes, Shrimp_Module* out) {
     *out = Shrimp_module_new("main");
     Shrimp_Function* main_func = Shrimp_module_new_function(out, "_start");
     for (size_t i = 0; i < nodes->count; i++) {
         switch (nodes->items[i].type) {
-            case NT_RET: {
-                Shrimp_Value value = generate_expr(nodes->items[i].ret, main_func);
+            case ST_RET: {
+                Shrimp_Value value = generate_expr(&nodes->items[i].ret, main_func);
                 Shrimp_function_return(main_func, value);
-                break;
-            }
-            case NT_BIN: case NT_NUMBER: {
-                fprintf(stderr, "No implicit return\n");
                 break;
             }
         }
@@ -368,12 +372,12 @@ bool generate_mod(Nodes* nodes, Shrimp_Module* out) {
     return true;
 }
 
-Shrimp_Value generate_expr(const Node* n, Shrimp_Function* out) {
+Shrimp_Value generate_expr(const Expr* n, Shrimp_Function* out) {
     switch (n->type) {
-        case NT_NUMBER: {
+        case ET_NUMBER: {
             return Shrimp_value_make_const(n->number);
         }
-        case NT_BIN: {
+        case ET_BIN: {
             Shrimp_Value l = generate_expr(n->bin.l, out);
             Shrimp_Value r = generate_expr(n->bin.r, out);
             switch (n->bin.op) {
@@ -385,10 +389,8 @@ Shrimp_Value generate_expr(const Node* n, Shrimp_Function* out) {
                 }
             }
         }
-        case NT_RET: {
-            return generate_expr(n->ret, out);
-        }
     }
+    assert(false);
 }
 
 #define SHRIMP_DA_INIT_CAP 16
@@ -840,42 +842,55 @@ bool parse_config(int argc, char** argv, Config* out) {
     return true;
 }
 
-void print_node(const Node* n, int indent) {
-    switch (n->type) {
-        case NT_NUMBER: {
-            fprintf(stderr, "%.*s%zu\n", indent * 2, " ", n->number);
-            return;
-        }
-        case NT_BIN: {
-            print_node(n->bin.l, indent + 1);
-            print_node(n->bin.r, indent + 1);
-            return;
-        }
-        case NT_RET: {
-            fprintf(stderr, "Return: \n");
-            print_node(n->ret, indent + 1);
-        }
-    }
-}
-
-bool parser_parse(Parser* parser, Nodes* out) {
+bool parser_parse(Parser* parser, Body* out) {
     while (!parser_empty(parser)) {
-        Node n = {0};
-        if (!parser_expression(parser, &n)) return false;
+        Stmt n = {0};
+        if (!parser_stmt(parser, &n)) return false;
         da_push(out, n, parser->arena);
     }
     return true;
 }
-bool parser_expression(Parser* parser, Node* out) {
+
+bool parser_stmt(Parser* parser, Stmt* out) {
+    Token curr;
+    if (!parser_bump(parser, &curr)) {
+        fprintf(stderr, "[ERROR]: Missing keyword for statment\n");
+        bong_error(parser->source, parser_last_token(parser).offset);
+        return false;
+    }
+    if (curr.type != TT_KEYWORD) {
+        fprintf(stderr, "[ERROR]: No statement (for now) starts with a token that is not a keyword\n");
+        bong_error(parser->source, parser_last_token(parser).offset);
+        return false;
+    }
+    switch (curr.kw) {
+        case KT_NO: assert(false);
+        case KT_RETURN: {
+            Expr e;
+            if (!parser_expression(parser, &e)) return false;
+            out->type = ST_RET;
+            out->ret = e;
+            Token hopefully_semi = {0};
+            if (!parser_expect_and_bump(parser, TT_SEMI, &hopefully_semi)) {
+                fprintf(stderr, "[ERROR]: Missing statment termination semicolon\n");
+                bong_error(parser->source, hopefully_semi.offset);
+                return false;
+            }
+            return true;
+        }
+    }
+    assert(false);
+}
+bool parser_expression(Parser* parser, Expr* out) {
     return parser_eq(parser, out);
 }
-bool parser_eq(Parser* parser, Node* out) {
+bool parser_eq(Parser* parser, Expr* out) {
     return parser_cmp(parser, out);
 }
-bool parser_cmp(Parser* parser, Node* out) {
+bool parser_cmp(Parser* parser, Expr* out) {
     return parser_term(parser, out);
 }
-bool parser_term(Parser* parser, Node* out) {
+bool parser_term(Parser* parser, Expr* out) {
     if (!parser_factor(parser, out)) return false;
     while (!parser_empty(parser)) {
         Token t = {0};
@@ -884,23 +899,23 @@ bool parser_term(Parser* parser, Node* out) {
             break;
         }
         parser_bump(parser, &t);
-        Node* left = arena_alloc(parser->arena, sizeof(Node));
+        Expr* left = arena_alloc(parser->arena, sizeof(Expr));
         *left = *out; // copy old expression into left
-        out->type = NT_BIN;
+        out->type = ET_BIN;
         out->bin.l = left;
         out->bin.op = t.op;
-        out->bin.r = arena_alloc(parser->arena, sizeof(Node));
+        out->bin.r = arena_alloc(parser->arena, sizeof(Expr));
         if (!parser_factor(parser, out->bin.r)) return false;
     }
     return true;
 }
-bool parser_factor(Parser* parser, Node* out) {
+bool parser_factor(Parser* parser, Expr* out) {
     return parser_unary(parser, out);
 }
-bool parser_unary(Parser* parser, Node* out) {
+bool parser_unary(Parser* parser, Expr* out) {
     return parser_primary(parser, out);
 }
-bool parser_primary(Parser* parser, Node* out) {
+bool parser_primary(Parser* parser, Expr* out) {
     Token t = {0};
     if (!parser_bump(parser, &t)) {
         fprintf(stderr, "[ERROR]: Missing expression\n");
@@ -908,27 +923,9 @@ bool parser_primary(Parser* parser, Node* out) {
     }
     switch (t.type) {
         case TT_NUMBER: {
-            out->type = NT_NUMBER;
+            out->type = ET_NUMBER;
             out->number = t.number;
             return true;
-        }
-        case TT_KEYWORD: {
-            switch (t.kw) {
-                case KT_NO: assert(false); break;
-                case KT_RETURN: {
-                    Token dummy;
-                    out->type = NT_RET;
-                    out->ret = NULL;
-
-                    out->ret = arena_alloc(parser->arena, sizeof(Node));
-                    if (!parser_expression(parser, out->ret)) return false;
-
-                    if (!parser_bump(parser, &dummy)) return false;
-
-                    return true;
-                }
-            }
-            break;
         }
         default: {
             fprintf(stderr, "[ERROR]: Unexpected token in place of primary expression %d\n", t.type);
