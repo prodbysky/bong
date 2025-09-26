@@ -78,6 +78,8 @@ typedef enum {
 typedef enum {
     OT_PLUS,
     OT_MINUS,
+    OT_STAR,
+    OT_SLASH,
 } OperatorType;
 
 typedef enum {
@@ -1150,6 +1152,18 @@ bool lexer_run(Lexer* lexer, Tokens* out) {
         }
         if (lexer_peek(lexer) == '-') {
             Token t = {.type = TT_OPERATOR, .offset = lexer->pos, .op = OT_MINUS, .len = 1, .file = lexer->source};
+            da_push(out, t, lexer->arena);
+            lexer_bump(lexer);
+            continue;
+        }
+        if (lexer_peek(lexer) == '*') {
+            Token t = {.type = TT_OPERATOR, .offset = lexer->pos, .op = OT_STAR, .len = 1, .file = lexer->source};
+            da_push(out, t, lexer->arena);
+            lexer_bump(lexer);
+            continue;
+        }
+        if (lexer_peek(lexer) == '/') {
+            Token t = {.type = TT_OPERATOR, .offset = lexer->pos, .op = OT_SLASH, .len = 1, .file = lexer->source};
             da_push(out, t, lexer->arena);
             lexer_bump(lexer);
             continue;
