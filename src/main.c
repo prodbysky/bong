@@ -348,7 +348,7 @@ int main(int argc, char** argv) {
     if (!generate_mod(&nodes, &mod)) return false;
     Shrimp_CompOptions opts = {
         .target = SHRIMP_TARGET_X86_64_NASM_LINUX,
-        .opts = SHRIMP_OPT_CONST_FOLD,
+        .opts = SHRIMP_OPT_NONE,
         .output_kind = SHRIMP_OUTPUT_EXE,
         .output_name = mod.name
     };
@@ -392,6 +392,12 @@ Shrimp_Value generate_expr(const Expr* n, Shrimp_Function* out) {
                 }
                 case OT_MINUS: {
                     return Shrimp_function_sub(out, l, r);
+                }
+                case OT_STAR: {
+                    return Shrimp_function_mul(out, l, r);
+                }
+                case OT_SLASH: {
+                    return Shrimp_function_div(out, l, r);
                 }
             }
         }
@@ -893,7 +899,7 @@ bool Shrimp_module_x86_64_dump_nasm_mod(const Shrimp_Module* mod, FILE* file) {
                 case SHRIMP_IT_MUL: {
                     Shrimp_x86_64_nasm_mov_value_to_reg(&instr->binop.l, "r10", file);
                     Shrimp_x86_64_nasm_mov_value_to_reg(&instr->binop.r, "r11", file);
-                    fprintf(file, "  mul r10, r11\n");
+                    fprintf(file, "  imul r10, r11\n");
                     fprintf(file, "  mov qword [rbp - %zu], r10\n", (instr->binop.result + 1) * 8);
                     break;
                 }
@@ -1040,7 +1046,19 @@ bool parser_term(Parser* parser, Expr* out) {
     return true;
 }
 bool parser_factor(Parser* parser, Expr* out) {
-    return parser_unary(parser, out);
+    if (!parser_unary(parser, out)) return false;
+    Token t = {0};
+    while (!parser_empty(parser) && parser_peek(parser, &t) && (t.type == TT_OPERATOR && (t.op == OT_STAR || t.op == OT_SLASH))) {
+        parser_bump(parser, &t);
+        Expr* left = arena_alloc(parser->arena, sizeof(Expr));
+        *left = *out;
+        out->type = ET_BIN;
+        out->bin.l = left;
+        out->bin.op = t.op;
+        out->bin.r = arena_alloc(parser->arena, sizeof(Expr));
+        if (!parser_unary(parser, out->bin.r)) return false;
+    }
+    return true;
 }
 bool parser_unary(Parser* parser, Expr* out) {
     return parser_primary(parser, out);
@@ -1117,6 +1135,8 @@ void print_token(const Token* t) {
             switch (t->op) {
                 case OT_PLUS: fprintf(stderr, "Operator `+`"); break;
                 case OT_MINUS: fprintf(stderr, "Operator `-`"); break;
+                case OT_STAR: fprintf(stderr, "Operator `*`"); break;
+                case OT_SLASH: fprintf(stderr, "Operator `/`"); break;
             }
             break;
         }
