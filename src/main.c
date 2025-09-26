@@ -1024,15 +1024,11 @@ bool parser_cmp(Parser* parser, Expr* out) {
 }
 bool parser_term(Parser* parser, Expr* out) {
     if (!parser_factor(parser, out)) return false;
-    while (!parser_empty(parser)) {
-        Token t = {0};
-        parser_peek(parser, &t);
-        if (t.type != TT_OPERATOR || (t.op != OT_PLUS && t.op != OT_MINUS)) {
-            break;
-        }
+    Token t = {0};
+    while (!parser_empty(parser) && parser_peek(parser, &t) && (t.type == TT_OPERATOR && (t.op == OT_PLUS || t.op == OT_MINUS))) {
         parser_bump(parser, &t);
         Expr* left = arena_alloc(parser->arena, sizeof(Expr));
-        *left = *out; // copy old expression into left
+        *left = *out;
         out->type = ET_BIN;
         out->bin.l = left;
         out->bin.op = t.op;
