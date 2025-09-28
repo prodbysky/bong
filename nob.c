@@ -1,4 +1,3 @@
-#include <stdlib.h>
 #include <string.h>
 #define NOB_IMPLEMENTATION
 #define NOB_STRIP_PREFIX
@@ -24,7 +23,12 @@ int main(int argc, char** argv) {
     if (argc > 1) rel = strcmp(argv[1], "release") == 0;
     
     mkdir_if_not_exists("build");
-    cmd_append(&c, "clang", "src/main.c", "-o", "build/bongc", "-Wall", "-Wextra", "-g");
+    cmd_append(&c, "clang", 
+                   "src/main.c", "src/arena.c", "src/fs.c", "src/config.c", "src/error.c", "src/lexer.c", "src/parser.c", 
+                   "-o", "build/bongc", 
+                   "-Wall", 
+                   "-Wextra", 
+                   "-g");
     if (rel) {
         cmd_append(&c, "-O3");
     } else {
