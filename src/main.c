@@ -130,6 +130,7 @@ bool Shrimp_module_x86_64_nasm_linux_compile(const Shrimp_Module* mod, Shrimp_Co
 bool Shrimp_module_x86_64_dump_nasm_mod(const Shrimp_Module* mod, FILE* file);
 void Shrimp_x86_64_nasm_mov_value_to_reg(const Shrimp_Value* value, const char* reg, FILE* out);
 
+
 bool generate_mod(Body* nodes, Shrimp_Module* out);
 Shrimp_Value generate_expr(const Expr* n, Shrimp_Function* out);
 

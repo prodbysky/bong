@@ -2,6 +2,7 @@
 #define LEXER_H_
 
 #include "fs.h"
+#include "str.h"
 #include <stdint.h>
 #include <stddef.h>
 #include <stdbool.h>
@@ -11,6 +12,7 @@ typedef enum {
     TT_OPERATOR,
     TT_SEMI,
     TT_KEYWORD,
+    TT_IDENT,
 } TokenType;
 
 typedef enum {
@@ -34,6 +36,7 @@ typedef struct {
         uint64_t number;
         OperatorType op;
         KeywordType kw;
+        StringView id;
     };
 } Token;
 

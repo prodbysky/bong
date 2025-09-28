@@ -41,6 +41,10 @@ void print_token(const Token* t) {
             }
             break;
         }
+        case TT_IDENT: {
+            fprintf(stderr, "Identifier: "STR_FMT, STR_ARG(&t->id));
+            break;
+        }
     }
 }
 
@@ -123,12 +127,15 @@ static bool lexer_kw_or_id(Lexer* lexer, Token* out) {
     while (!lexer_done(lexer) && isalnum(lexer_peek(lexer))) lexer_bump(lexer);
     out->kw = lexer_to_kw(lexer->source->content.items + out->offset, lexer->pos - out->offset);
     if (!out->kw) {
-        fprintf(stderr, "[ERROR]: No custom identifiers are supported\n");
-        return false;
+        out->id.items = &lexer->source->content.items[out->offset];
+        out->id.count = out->offset - lexer->pos;
+        out->type = TT_IDENT;
+        return true;
+    } else {
+        out->type = TT_KEYWORD;
+        out->len = lexer->pos - out->offset;
+        return true;
     }
-    out->type = TT_KEYWORD;
-    out->len = lexer->pos - out->offset;
-    return true;
 }
 
 static KeywordType lexer_to_kw(const char* pos, size_t len) {
