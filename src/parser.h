@@ -3,8 +3,10 @@
 
 #include "fs.h"
 #include "lexer.h"
+#include "str.h"
 #include <stdbool.h>
 #include <stdint.h>
+
 typedef struct {
     SourceFile const* source;
     Tokens* tokens;
@@ -12,14 +14,14 @@ typedef struct {
     size_t pos;
 } Parser;
 
-
 typedef enum {
     ET_NUMBER,
     ET_BIN,
 } ExprType;
 
 typedef enum {
-    ST_RET
+    ST_RET,
+    ST_VAR_DEF,
 } StmtType;
 
 typedef struct Expr {
@@ -38,6 +40,10 @@ typedef struct Stmt {
     StmtType type;
     union {
         Expr ret;
+        struct {
+            StringView name;
+            Expr value;
+        } var_def;
     };
 } Stmt;
 
@@ -48,6 +54,5 @@ typedef struct {
 } Body;
 
 bool parser_parse(Parser* parser, Body* out);
-
 
 #endif

@@ -25,6 +25,14 @@ void print_token(const Token* t) {
             fprintf(stderr, "Semicolon");
             break;
         }
+        case TT_COLON: {
+            fprintf(stderr, "Colon");
+            break;
+        }
+        case TT_ASSIGN: {
+            fprintf(stderr, "Assign");
+            break;
+        }
         case TT_OPERATOR: {
             switch (t->op) {
                 case OT_PLUS: fprintf(stderr, "Operator `+`"); break;
@@ -88,6 +96,18 @@ bool lexer_run(Lexer* lexer, Tokens* out) {
         }
         if (lexer_peek(lexer) == ';') {
             Token t = {.type = TT_SEMI, .offset = lexer->pos, .len = 1, .file = lexer->source};
+            da_push(out, t, lexer->arena);
+            lexer_bump(lexer);
+            continue;
+        }
+        if (lexer_peek(lexer) == ':') {
+            Token t = {.type = TT_COLON, .offset = lexer->pos, .len = 1, .file = lexer->source};
+            da_push(out, t, lexer->arena);
+            lexer_bump(lexer);
+            continue;
+        }
+        if (lexer_peek(lexer) == '=') {
+            Token t = {.type = TT_ASSIGN, .offset = lexer->pos, .len = 1, .file = lexer->source};
             da_push(out, t, lexer->arena);
             lexer_bump(lexer);
             continue;

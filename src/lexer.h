@@ -13,6 +13,8 @@ typedef enum {
     TT_SEMI,
     TT_KEYWORD,
     TT_IDENT,
+    TT_COLON,
+    TT_ASSIGN,
 } TokenType;
 
 typedef enum {
@@ -27,6 +29,13 @@ typedef enum {
     KT_RETURN,
 } KeywordType;
 
+
+/*
+since bong wont have types for now
+we will "infer" that its a u64 :p
+after the colon the type will be specified
+count := 0;
+*/
 typedef struct {
     TokenType type;
     SourceFile const * file;
@@ -54,7 +63,5 @@ typedef struct {
 
 void print_token(const Token* t);
 bool lexer_run(Lexer* lexer, Tokens* out);
-
-
 
 #endif

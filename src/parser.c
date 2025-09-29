@@ -2,6 +2,7 @@
 #include "da.h"
 #include <stdio.h>
 #include "error.h"
+#include "lexer.h"
 #include <assert.h>
 
 static bool parser_peek(const Parser* parser, Token* out);
@@ -48,24 +49,47 @@ static bool parser_stmt(Parser* parser, Stmt* out) {
         return false;
     }
     if (curr.type != TT_KEYWORD) {
-        fprintf(stderr, "[ERROR]: No statement (for now) starts with a token that is not a keyword\n");
-        bong_error(parser->source, parser_last_token(parser).offset);
-        return false;
-    }
-    switch (curr.kw) {
-        case KT_NO: assert(false);
-        case KT_RETURN: {
-            Expr e;
-            if (!parser_expression(parser, &e)) return false;
-            out->type = ST_RET;
-            out->ret = e;
-            Token hopefully_semi = {0};
-            if (!parser_expect_and_bump(parser, TT_SEMI, &hopefully_semi)) {
-                fprintf(stderr, "[ERROR]: Missing statment termination semicolon\n");
-                bong_error(parser->source, hopefully_semi.offset);
+        if (curr.type == TT_IDENT) {
+            Token name = curr;
+            Token colon = {0};
+            if (!parser_expect_and_bump(parser, TT_COLON, &colon)) {
+                fprintf(stderr, "[ERROR]: After a bare identifier a [colon]-assign token is expected\n");
+                bong_error(parser->source, parser_last_token(parser).offset);
                 return false;
             }
+            if (!parser_expect_and_bump(parser, TT_ASSIGN, &colon)) {
+                fprintf(stderr, "[ERROR]: After a bare identifier a [colon]-assign token is expected\n");
+                bong_error(parser->source, parser_last_token(parser).offset);
+                return false;
+            }
+            Expr e = {0};
+            if (!parser_expression(parser, &e)) return false;
+            if (!parser_expect_and_bump(parser, TT_SEMI, &colon)) {
+                fprintf(stderr, "[ERROR]: A semicolon is expected after the expression of the var define statement\n");
+                bong_error(parser->source, parser_last_token(parser).offset);
+                return false;
+            }
+            out->type = ST_VAR_DEF;
+            out->var_def.name = name.id;
+            out->var_def.value = e;
             return true;
+        }
+    } else {
+        switch (curr.kw) {
+            case KT_NO: assert(false);
+            case KT_RETURN: {
+                Expr e;
+                if (!parser_expression(parser, &e)) return false;
+                out->type = ST_RET;
+                out->ret = e;
+                Token hopefully_semi = {0};
+                if (!parser_expect_and_bump(parser, TT_SEMI, &hopefully_semi)) {
+                    fprintf(stderr, "[ERROR]: Missing statment termination semicolon\n");
+                    bong_error(parser->source, hopefully_semi.offset);
+                    return false;
+                }
+                return true;
+            }
         }
     }
     assert(false);
