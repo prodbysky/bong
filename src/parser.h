@@ -16,6 +16,7 @@ typedef struct {
 
 typedef enum {
     ET_NUMBER,
+    ET_ID,
     ET_BIN,
 } ExprType;
 
@@ -28,6 +29,7 @@ typedef struct Expr {
     ExprType type;
     union {
         uint64_t number;
+        StringView id;
         struct {
             struct Expr* l;
             struct Expr* r;

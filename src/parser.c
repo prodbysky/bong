@@ -152,6 +152,12 @@ static bool parser_primary(Parser* parser, Expr* out) {
             out->number = t.number;
             return true;
         }
+        case TT_IDENT: {
+            // TODO: Function calls as values 
+            out->type = ET_ID;
+            out->id = t.id;
+            return true;
+        }
         default: {
             fprintf(stderr, "[ERROR]: Unexpected token in place of primary expression %d\n", t.type);
             bong_error(parser->source, t.offset);
