@@ -64,7 +64,7 @@ bool lexer_run(Lexer* lexer, Tokens* out) {
             da_push(out, t, lexer->arena);
             continue;
         }
-        if (isalpha(lexer_peek(lexer))) {
+        if (isalpha(lexer_peek(lexer)) || lexer_peek(lexer) == '_') {
             Token t = {0};
             if (!lexer_kw_or_id(lexer, &t)) return false;
             da_push(out, t, lexer->arena);
@@ -144,7 +144,7 @@ static bool lexer_number(Lexer* lexer, Token* out) {
 static bool lexer_kw_or_id(Lexer* lexer, Token* out) {
     out->offset = lexer->pos;
     out->file = lexer->source;
-    while (!lexer_done(lexer) && isalnum(lexer_peek(lexer))) lexer_bump(lexer);
+    while (!lexer_done(lexer) && (isalnum(lexer_peek(lexer)) || lexer_peek(lexer) == '_')) lexer_bump(lexer);
     out->kw = lexer_to_kw(lexer->source->content.items + out->offset, lexer->pos - out->offset);
     if (!out->kw) {
         out->id.items = &lexer->source->content.items[out->offset];
