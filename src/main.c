@@ -1,3 +1,4 @@
+#include "error.h"
 #include "str.h"
 #include <assert.h>
 #include <stdbool.h>
@@ -148,7 +149,7 @@ void variableLUT_insert(VariableLUT* lut, StringView name, Shrimp_Value value, A
 NameIRValue* variableLUT_get(const VariableLUT* lut, StringView name);
 
 bool generate_mod(Body* nodes, Shrimp_Module* out, Arena* arena);
-Shrimp_Value generate_expr(const Expr* n, Shrimp_Function* out, const VariableLUT* lut);
+bool generate_expr(Shrimp_Value* out_value, const Expr* n, Shrimp_Function* out, const VariableLUT* lut);
 
 
 int main(int argc, char** argv) {
@@ -192,16 +193,22 @@ bool generate_mod(Body* nodes, Shrimp_Module* out, Arena* arena) {
     for (size_t i = 0; i < nodes->count; i++) {
         switch (nodes->items[i].type) {
             case ST_RET: {
-                Shrimp_Value value = generate_expr(&nodes->items[i].ret, main_func, &lut);
+                Shrimp_Value value;
+                if (!generate_expr(&value, &nodes->items[i].ret, main_func, &lut)) return false;
                 Shrimp_function_return(main_func, value);
                 break;
             }
             case ST_VAR_DEF: {
                 NameIRValue var = {
                     .name = nodes->items[i].var_def.name,
-                    .val = generate_expr(&nodes->items[i].var_def.value, main_func, &lut)
                 };
+                if (!generate_expr(&var.val, &nodes->items[i].var_def.value, main_func, &lut)) return false;
                 da_push(&lut, var, arena);
+                break;
+            }
+            case ST_VAR_REASSIGN: {
+                NameIRValue* var = variableLUT_get(&lut, nodes->items[i].var_reassign.name);
+                if (!generate_expr(&var->val, &nodes->items[i].var_reassign.value, main_func, &lut)) return false;
                 break;
             }
         }
@@ -210,34 +217,41 @@ bool generate_mod(Body* nodes, Shrimp_Module* out, Arena* arena) {
     return true;
 }
 
-Shrimp_Value generate_expr(const Expr* n, Shrimp_Function* out, const VariableLUT* lut) {
+bool generate_expr(Shrimp_Value* out_value, const Expr* n, Shrimp_Function* out, const VariableLUT* lut) {
     switch (n->type) {
         case ET_NUMBER: {
-            return Shrimp_value_make_const(n->number);
+            *out_value = Shrimp_value_make_const(n->number);
+            return true;
         }
         case ET_ID: {
-            NameIRValue* var =variableLUT_get(lut, n->id);
+            NameIRValue* var = variableLUT_get(lut, n->id);
             if (var == NULL) {
-                fprintf(stderr, "So we need to handle erorrs :(\n");
-                exit(1);
+                fprintf(stderr, "[ERROR]: Unknown variable name used\n");
+                return false;
             }
-            return var->val;
+            *out_value = var->val;
+            return true;
         }
         case ET_BIN: {
-            Shrimp_Value l = generate_expr(n->bin.l, out, lut);
-            Shrimp_Value r = generate_expr(n->bin.r, out, lut);
+            Shrimp_Value l, r;
+            if (!generate_expr(&l, n->bin.l, out, lut)) return false;
+            if (!generate_expr(&r, n->bin.r, out, lut)) return false;
             switch (n->bin.op) {
                 case OT_PLUS: {
-                    return Shrimp_function_add(out, l, r);
+                    *out_value = Shrimp_function_add(out, l, r);
+                    return true;
                 }
                 case OT_MINUS: {
-                    return Shrimp_function_sub(out, l, r);
+                    *out_value = Shrimp_function_sub(out, l, r);
+                    return true;
                 }
                 case OT_STAR: {
-                    return Shrimp_function_mul(out, l, r);
+                    *out_value = Shrimp_function_mul(out, l, r);
+                    return true;
                 }
                 case OT_SLASH: {
-                    return Shrimp_function_div(out, l, r);
+                    *out_value = Shrimp_function_div(out, l, r);
+                    return true;
                 }
             }
         }

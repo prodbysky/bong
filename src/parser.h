@@ -23,6 +23,7 @@ typedef enum {
 typedef enum {
     ST_RET,
     ST_VAR_DEF,
+    ST_VAR_REASSIGN,
 } StmtType;
 
 typedef struct Expr {
@@ -46,6 +47,10 @@ typedef struct Stmt {
             StringView name;
             Expr value;
         } var_def;
+        struct {
+            StringView name;
+            Expr value;
+        } var_reassign;
     };
 } Stmt;
 

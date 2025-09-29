@@ -48,48 +48,72 @@ static bool parser_stmt(Parser* parser, Stmt* out) {
         bong_error(parser->source, parser_last_token(parser).offset);
         return false;
     }
-    if (curr.type != TT_KEYWORD) {
-        if (curr.type == TT_IDENT) {
-            Token name = curr;
-            Token colon = {0};
-            if (!parser_expect_and_bump(parser, TT_COLON, &colon)) {
-                fprintf(stderr, "[ERROR]: After a bare identifier a [colon]-assign token is expected\n");
-                bong_error(parser->source, parser_last_token(parser).offset);
-                return false;
+
+    switch (curr.type) {
+        case TT_KEYWORD: {
+            switch (curr.kw) {
+                case KT_NO: assert(false);
+                case KT_RETURN: {
+                    Expr e;
+                    if (!parser_expression(parser, &e)) return false;
+                    out->type = ST_RET;
+                    out->ret = e;
+                    Token hopefully_semi = {0};
+                    if (!parser_expect_and_bump(parser, TT_SEMI, &hopefully_semi)) {
+                        fprintf(stderr, "[ERROR]: Missing statment termination semicolon\n");
+                        bong_error(parser->source, hopefully_semi.offset);
+                        return false;
+                    }
+                    return true;
+                }
             }
-            if (!parser_expect_and_bump(parser, TT_ASSIGN, &colon)) {
-                fprintf(stderr, "[ERROR]: After a bare identifier a [colon]-assign token is expected\n");
-                bong_error(parser->source, parser_last_token(parser).offset);
-                return false;
-            }
-            Expr e = {0};
-            if (!parser_expression(parser, &e)) return false;
-            if (!parser_expect_and_bump(parser, TT_SEMI, &colon)) {
-                fprintf(stderr, "[ERROR]: A semicolon is expected after the expression of the var define statement\n");
-                bong_error(parser->source, parser_last_token(parser).offset);
-                return false;
-            }
-            out->type = ST_VAR_DEF;
-            out->var_def.name = name.id;
-            out->var_def.value = e;
-            return true;
         }
-    } else {
-        switch (curr.kw) {
-            case KT_NO: assert(false);
-            case KT_RETURN: {
-                Expr e;
-                if (!parser_expression(parser, &e)) return false;
-                out->type = ST_RET;
-                out->ret = e;
-                Token hopefully_semi = {0};
-                if (!parser_expect_and_bump(parser, TT_SEMI, &hopefully_semi)) {
-                    fprintf(stderr, "[ERROR]: Missing statment termination semicolon\n");
-                    bong_error(parser->source, hopefully_semi.offset);
+        case TT_IDENT: {
+            Token name = curr;
+            if (!parser_bump(parser, &curr)) return false;
+            switch (curr.type) {
+                case TT_COLON: {
+                    if (!parser_expect_and_bump(parser, TT_ASSIGN, &curr)) {
+                        fprintf(stderr, "[ERROR]: After a bare identifier a [colon]-assign token is expected\n");
+                        bong_error(parser->source, parser_last_token(parser).offset);
+                        return false;
+                    }
+                    Expr e = {0};
+                    if (!parser_expression(parser, &e)) return false;
+                    if (!parser_expect_and_bump(parser, TT_SEMI, &curr)) {
+                        fprintf(stderr, "[ERROR]: A semicolon is expected after the expression of the var define statement\n");
+                        bong_error(parser->source, parser_last_token(parser).offset);
+                        return false;
+                    }
+                    out->type = ST_VAR_DEF;
+                    out->var_def.name = name.id;
+                    out->var_def.value = e;
+                    return true;
+                }
+                case TT_ASSIGN: {
+                    Expr e = {0};
+                    if (!parser_expression(parser, &e)) return false;
+                    out->type = ST_VAR_REASSIGN;
+                    out->var_reassign.name = name.id;
+                    out->var_reassign.value = e;
+                    if (!parser_expect_and_bump(parser, TT_SEMI, &curr)) {
+                        fprintf(stderr, "[ERROR]: A semicolon is expected after the expression of the var define statement\n");
+                        bong_error(parser->source, parser_last_token(parser).offset);
+                        return false;
+                    }
+                    return true;
+                }
+                default: {
+                    fprintf(stderr, "[ERROR]: Unknown token after an identifier in a statement\n");
+                    bong_error(parser->source, curr.offset);
                     return false;
                 }
-                return true;
             }
+        }
+        default: {
+            fprintf(stderr, "[ERROR]: Unknown token at the beginning of a statement\n");
+            bong_error(parser->source, curr.offset);
+            return false;
         }
     }
     assert(false);
