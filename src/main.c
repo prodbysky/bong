@@ -1,3 +1,4 @@
+#include "str.h"
 #include <assert.h>
 #include <stdbool.h>
 #include <stddef.h>
@@ -131,8 +132,23 @@ bool Shrimp_module_x86_64_dump_nasm_mod(const Shrimp_Module* mod, FILE* file);
 void Shrimp_x86_64_nasm_mov_value_to_reg(const Shrimp_Value* value, const char* reg, FILE* out);
 
 
-bool generate_mod(Body* nodes, Shrimp_Module* out);
-Shrimp_Value generate_expr(const Expr* n, Shrimp_Function* out);
+// our internal shrimp usage
+typedef struct {
+    StringView name;
+    Shrimp_Value val;
+} NameIRValue;
+
+typedef struct {
+    NameIRValue* items;
+    size_t count;
+    size_t capacity;
+} VariableLUT;
+
+void variableLUT_insert(VariableLUT* lut, StringView name, Shrimp_Value value, Arena* arena);
+NameIRValue* variableLUT_get(const VariableLUT* lut, StringView name);
+
+bool generate_mod(Body* nodes, Shrimp_Module* out, Arena* arena);
+Shrimp_Value generate_expr(const Expr* n, Shrimp_Function* out, const VariableLUT* lut);
 
 
 int main(int argc, char** argv) {
@@ -157,7 +173,7 @@ int main(int argc, char** argv) {
     Body nodes = {0};
     if (!parser_parse(&p, &nodes)) return 1;
     Shrimp_Module mod = Shrimp_module_new("main");
-    if (!generate_mod(&nodes, &mod)) return false;
+    if (!generate_mod(&nodes, &mod, &arena)) return false;
     Shrimp_CompOptions opts = {
         .target = SHRIMP_TARGET_X86_64_NASM_LINUX,
         .opts = SHRIMP_OPT_NONE,
@@ -169,14 +185,23 @@ int main(int argc, char** argv) {
 }
 
 
-bool generate_mod(Body* nodes, Shrimp_Module* out) {
+bool generate_mod(Body* nodes, Shrimp_Module* out, Arena* arena) {
     *out = Shrimp_module_new("main");
     Shrimp_Function* main_func = Shrimp_module_new_function(out, "_start");
+    VariableLUT lut = {0};
     for (size_t i = 0; i < nodes->count; i++) {
         switch (nodes->items[i].type) {
             case ST_RET: {
-                Shrimp_Value value = generate_expr(&nodes->items[i].ret, main_func);
+                Shrimp_Value value = generate_expr(&nodes->items[i].ret, main_func, &lut);
                 Shrimp_function_return(main_func, value);
+                break;
+            }
+            case ST_VAR_DEF: {
+                NameIRValue var = {
+                    .name = nodes->items[i].var_def.name,
+                    .val = generate_expr(&nodes->items[i].var_def.value, main_func, &lut)
+                };
+                da_push(&lut, var, arena);
                 break;
             }
         }
@@ -185,14 +210,22 @@ bool generate_mod(Body* nodes, Shrimp_Module* out) {
     return true;
 }
 
-Shrimp_Value generate_expr(const Expr* n, Shrimp_Function* out) {
+Shrimp_Value generate_expr(const Expr* n, Shrimp_Function* out, const VariableLUT* lut) {
     switch (n->type) {
         case ET_NUMBER: {
             return Shrimp_value_make_const(n->number);
         }
+        case ET_ID: {
+            NameIRValue* var =variableLUT_get(lut, n->id);
+            if (var == NULL) {
+                fprintf(stderr, "So we need to handle erorrs :(\n");
+                exit(1);
+            }
+            return var->val;
+        }
         case ET_BIN: {
-            Shrimp_Value l = generate_expr(n->bin.l, out);
-            Shrimp_Value r = generate_expr(n->bin.r, out);
+            Shrimp_Value l = generate_expr(n->bin.l, out, lut);
+            Shrimp_Value r = generate_expr(n->bin.r, out, lut);
             switch (n->bin.op) {
                 case OT_PLUS: {
                     return Shrimp_function_add(out, l, r);
@@ -210,6 +243,22 @@ Shrimp_Value generate_expr(const Expr* n, Shrimp_Function* out) {
         }
     }
     assert(false);
+}
+
+void variableLUT_insert(VariableLUT* lut, StringView name, Shrimp_Value value, Arena* arena) {
+    NameIRValue n = {
+        .name = name,
+        .val = value
+    };
+    da_push(lut, n, arena);
+}
+NameIRValue* variableLUT_get(const VariableLUT* lut, StringView name) {
+    for (size_t i = 0; i < lut->count; i++) {
+        if (name.count == lut->items[i].name.count && strncmp(name.items, lut->items[i].name.items, name.count)) {
+            return &lut->items[i];
+        }
+    }
+    return NULL;
 }
 
 #define SHRIMP_DA_INIT_CAP 16
