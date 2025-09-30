@@ -15,6 +15,8 @@ typedef enum {
     TT_IDENT,
     TT_COLON,
     TT_ASSIGN,
+    TT_OPEN_CURLY,
+    TT_CLOSE_CURLY,
 } TokenType;
 
 typedef enum {
@@ -27,6 +29,7 @@ typedef enum {
 typedef enum {
     KT_NO = 0,
     KT_RETURN,
+    KT_IF,
 } KeywordType;
 
 

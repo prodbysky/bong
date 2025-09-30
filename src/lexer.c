@@ -33,6 +33,14 @@ void print_token(const Token* t) {
             fprintf(stderr, "Assign");
             break;
         }
+        case TT_OPEN_CURLY: {
+            fprintf(stderr, "Open curly");
+            break;
+        }
+        case TT_CLOSE_CURLY: {
+            fprintf(stderr, "Close curly");
+            break;
+        }
         case TT_OPERATOR: {
             switch (t->op) {
                 case OT_PLUS: fprintf(stderr, "Operator `+`"); break;
@@ -45,6 +53,7 @@ void print_token(const Token* t) {
         case TT_KEYWORD: {
             switch (t->kw) {
                 case KT_RETURN: fprintf(stderr, "Keyword: return"); break;
+                case KT_IF: fprintf(stderr, "Keyword: if"); break;
                 case KT_NO: assert(false && "Unreachable this keyword is never produced"); break;
             }
             break;
@@ -112,6 +121,18 @@ bool lexer_run(Lexer* lexer, Tokens* out) {
             lexer_bump(lexer);
             continue;
         }
+        if (lexer_peek(lexer) == '{') {
+            Token t = {.type = TT_OPEN_CURLY, .offset = lexer->pos, .len = 1, .file = lexer->source};
+            da_push(out, t, lexer->arena);
+            lexer_bump(lexer);
+            continue;
+        }
+        if (lexer_peek(lexer) == '}') {
+            Token t = {.type = TT_CLOSE_CURLY, .offset = lexer->pos, .len = 1, .file = lexer->source};
+            da_push(out, t, lexer->arena);
+            lexer_bump(lexer);
+            continue;
+        }
         fprintf(stderr, "[ERROR]: Unknown char found when lexing the source code: %c\n", lexer_peek(lexer));
         bong_error(lexer->source, lexer->pos);
         return false;
@@ -160,6 +181,7 @@ static bool lexer_kw_or_id(Lexer* lexer, Token* out) {
 
 static KeywordType lexer_to_kw(const char* pos, size_t len) {
     if (len == 6 && strncmp(pos, "return", 6) == 0) return KT_RETURN;
+    if (len == 2 && strncmp(pos, "if", 2) == 0) return KT_IF;
 
     return KT_NO;
 }

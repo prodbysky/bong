@@ -11,6 +11,7 @@ static bool parser_expect_and_bump(Parser* parser, TokenType type, Token* out);
 static bool parser_empty(const Parser* parser);
 
 static bool parser_stmt(Parser* parser, Stmt* out);
+static bool parser_block(Parser* parser, Body* out);
 /*
     Ref: Crafting interpreters page 80
     expression → equality ;
@@ -66,6 +67,12 @@ static bool parser_stmt(Parser* parser, Stmt* out) {
                     }
                     return true;
                 }
+                case KT_IF: {
+                    out->type = ST_IF;
+                    if (!parser_expression(parser, &out->if_st.cond)) return false;
+                    if (!parser_block(parser, &out->if_st.body)) return false;
+                    return true;
+                }
             }
         }
         case TT_IDENT: {
@@ -118,6 +125,28 @@ static bool parser_stmt(Parser* parser, Stmt* out) {
     }
     assert(false);
 }
+
+static bool parser_block(Parser* parser, Body* out) {
+    Token open_curly;
+    if (!parser_expect_and_bump(parser, TT_OPEN_CURLY, &open_curly)) {
+        fprintf(stderr, "[ERROR]: Expected a `{` to open a block\n");
+        bong_error(parser->source, open_curly.offset);
+        return false;
+    }
+    while (parser_peek(parser, &open_curly)) {
+        if (open_curly.type == TT_CLOSE_CURLY) {
+            parser_bump(parser, &open_curly);
+            return true;
+        }
+        Stmt s = {0};
+        if (!parser_stmt(parser, &s)) return false;
+        da_push(out, s, parser->arena);
+    }
+    fprintf(stderr, "[ERROR]: Missing `}` to close a block\n");
+    bong_error(parser->source, open_curly.offset);
+    return false;
+}
+
 static bool parser_expression(Parser* parser, Expr* out) {
     return parser_eq(parser, out);
 }

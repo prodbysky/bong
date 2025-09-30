@@ -3,12 +3,14 @@
 
 #include <stddef.h>
 
+// Non-null terminated owned string
 typedef struct {
     char* items;
     size_t count;
     size_t capacity;
 } String;
 
+// Non-null terminated referenced string
 typedef struct {
     char const* items;
     size_t count;

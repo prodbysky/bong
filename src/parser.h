@@ -21,6 +21,7 @@ typedef enum {
 } ExprType;
 
 typedef enum {
+    ST_IF,
     ST_RET,
     ST_VAR_DEF,
     ST_VAR_REASSIGN,
@@ -39,10 +40,23 @@ typedef struct Expr {
     };
 } Expr;
 
+
+struct Stmt;
+
+typedef struct {
+    struct Stmt* items;
+    size_t count;
+    size_t capacity;
+} Body;
+
 typedef struct Stmt {
     StmtType type;
     union {
         Expr ret;
+        struct {
+            Expr cond;
+            Body body;
+        } if_st;
         struct {
             StringView name;
             Expr value;
@@ -53,12 +67,6 @@ typedef struct Stmt {
         } var_reassign;
     };
 } Stmt;
-
-typedef struct {
-    Stmt* items;
-    size_t count;
-    size_t capacity;
-} Body;
 
 bool parser_parse(Parser* parser, Body* out);
 
