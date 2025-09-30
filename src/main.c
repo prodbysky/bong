@@ -27,8 +27,11 @@ typedef enum {
     SHRIMP_IT_SUB,
     SHRIMP_IT_MUL,
     SHRIMP_IT_DIV,
+    SHRIMP_IT_JUMP,
+    SHRIMP_IT_LABEL,
     SHRIMP_IT_ASSIGN,
     SHRIMP_IT_RETURN,
+    SHRIMP_IT_JUMP_IF,
 } Shrimp_InstrType;
 
 typedef enum {
@@ -37,6 +40,7 @@ typedef enum {
 } Shrimp_ValueKind;
 
 typedef uint64_t Shrimp_Temp;
+typedef uint64_t Shrimp_Label;
 
 typedef struct {
     Shrimp_ValueKind kind;
@@ -59,12 +63,21 @@ typedef struct {
             Shrimp_Value r;
             Shrimp_Temp result;
         } binop;
+        struct {
+            Shrimp_Value cond;
+            Shrimp_Label to;
+        } jmp_if;
+        struct {
+            Shrimp_Label to;
+        } jmp;
+        Shrimp_Label label;
     };
 } Shrimp_Instr;
 
 typedef struct {
     const char* name;
     size_t temp_count;
+    Shrimp_Label label_count;
     // body
     size_t count;
     size_t capacity;
@@ -110,6 +123,8 @@ typedef struct {
 Shrimp_Module Shrimp_module_new(const char* name);
 void Shrimp_module_cleanup(Shrimp_Module mod);
 Shrimp_Function* Shrimp_module_new_function(Shrimp_Module* mod, const char* name);
+Shrimp_Label Shrimp_function_label_alloc(Shrimp_Function* func);
+void Shrimp_function_label_push(Shrimp_Function* func, Shrimp_Label label);
 void Shrimp_function_return(Shrimp_Function* func, Shrimp_Value value);
 Shrimp_Value Shrimp_function_add(Shrimp_Function* func, Shrimp_Value l, Shrimp_Value r);
 Shrimp_Value Shrimp_function_sub(Shrimp_Function* func, Shrimp_Value l, Shrimp_Value r);
@@ -481,6 +496,7 @@ void Shrimp_module_const_fold(Shrimp_Module* mod) {
                     }
                     break;
                 }
+                case SHRIMP_IT_LABEL: case SHRIMP_IT_JUMP: case SHRIMP_IT_JUMP_IF: break;
             }
         }
     }
@@ -517,6 +533,27 @@ bool Shrimp_module_verify(const Shrimp_Module* mod) {
                 case SHRIMP_IT_ASSIGN: {
                     if (ins->assign.into >= func->temp_count) {
                         fprintf(stderr, "[Shrimp: Module %s, function %s, verification failure]: Place of assign instruction cannot be a non-temporary value\n", mod->name, func->name);
+                        return false;
+                    }
+                    break;
+                }
+                case SHRIMP_IT_LABEL: {
+                    if (ins->label >= func->label_count) {
+                        fprintf(stderr, "[Shrimp: Module %s, function %s, verification failure]: Invalid label inserted %zu when max is %zu\n", mod->name, func->name, ins->label, func->label_count);
+                        return false;
+                    }
+                    break;
+                }
+                case SHRIMP_IT_JUMP: {
+                    if (ins->jmp.to >= func->label_count) {
+                        fprintf(stderr, "[Shrimp: Module %s, function %s, verification failure]: Invalid label provided to jump to %zu when max is %zu\n", mod->name, func->name, ins->label, func->label_count);
+                        return false;
+                    }
+                    break;
+                }
+                case SHRIMP_IT_JUMP_IF: {
+                    if (ins->jmp_if.to >= func->label_count) {
+                        fprintf(stderr, "[Shrimp: Module %s, function %s, verification failure]: Invalid label provided to jump to %zu when max is %zu\n", mod->name, func->name, ins->label, func->label_count);
                         return false;
                     }
                     break;
@@ -609,6 +646,20 @@ void Shrimp_module_dump(FILE* file, Shrimp_Module mod) {
                     Shrimp_value_dump(file, instr->ret);
                     break;
                 }
+                case SHRIMP_IT_LABEL: {
+                    fprintf(file, "%zu:", instr->label);
+                    break;
+                }
+                case SHRIMP_IT_JUMP: {
+                    fprintf(file, "jump @%zu", instr->jmp.to);
+                    break;
+                }
+                case SHRIMP_IT_JUMP_IF: {
+                    fprintf(file, "jump_nz ");
+                    Shrimp_value_dump(file, instr->jmp_if.cond);
+                    fprintf(file, " @%zu", instr->jmp_if.to);
+                    break;
+                }
             }
             fprintf(file, "\n");
         }
@@ -646,6 +697,18 @@ void Shrimp_function_return(Shrimp_Function* func, Shrimp_Value value) {
     };
     Shrimp_da_push(func, instr);
 }
+
+Shrimp_Label Shrimp_function_label_alloc(Shrimp_Function* func) {
+    return func->label_count++;
+}
+void Shrimp_function_label_push(Shrimp_Function* func, Shrimp_Label label) {
+    Shrimp_Instr lab = {
+        .t = SHRIMP_IT_LABEL,
+        .label = label
+    };
+    Shrimp_da_push(func, lab);
+}
+
 Shrimp_Value Shrimp_function_add(Shrimp_Function* func, Shrimp_Value l, Shrimp_Value r) {
     Shrimp_Value result = Shrimp_function_alloc_temp(func);
     Shrimp_Instr instr = {
@@ -789,6 +852,20 @@ bool Shrimp_module_x86_64_dump_nasm_mod(const Shrimp_Module* mod, FILE* file) {
                 case SHRIMP_IT_RETURN: {
                     Shrimp_x86_64_nasm_mov_value_to_reg(&instr->ret, "rax", file);
                     fprintf(file, "  jmp .exit\n");
+                    break;
+                }
+                case SHRIMP_IT_LABEL: {
+                    fprintf(file, "  .%zu:\n", instr->label);
+                    break;
+                }
+                case SHRIMP_IT_JUMP: {
+                    fprintf(file, "  jmp .%zu\n", instr->jmp.to);
+                    break;
+                }
+                case SHRIMP_IT_JUMP_IF: {
+                    Shrimp_x86_64_nasm_mov_value_to_reg(&instr->jmp_if.cond, "r10", file);
+                    fprintf(file, "  cmp r10, 0\n");
+                    fprintf(file, "  jnz .%zu\n", instr->jmp_if.to);
                     break;
                 }
             }
