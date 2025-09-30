@@ -31,7 +31,7 @@ typedef enum {
     SHRIMP_IT_LABEL,
     SHRIMP_IT_ASSIGN,
     SHRIMP_IT_RETURN,
-    SHRIMP_IT_JUMP_IF,
+    SHRIMP_IT_JUMP_IF_NOT,
 } Shrimp_InstrType;
 
 typedef enum {
@@ -66,7 +66,7 @@ typedef struct {
         struct {
             Shrimp_Value cond;
             Shrimp_Label to;
-        } jmp_if;
+        } jmp_if_not;
         struct {
             Shrimp_Label to;
         } jmp;
@@ -130,6 +130,8 @@ Shrimp_Value Shrimp_function_add(Shrimp_Function* func, Shrimp_Value l, Shrimp_V
 Shrimp_Value Shrimp_function_sub(Shrimp_Function* func, Shrimp_Value l, Shrimp_Value r);
 Shrimp_Value Shrimp_function_mul(Shrimp_Function* func, Shrimp_Value l, Shrimp_Value r);
 Shrimp_Value Shrimp_function_div(Shrimp_Function* func, Shrimp_Value l, Shrimp_Value r);
+void Shrimp_function_jump_if_not(Shrimp_Function* func, Shrimp_Value v, Shrimp_Label l);
+void Shrimp_function_jump(Shrimp_Function* func, Shrimp_Label l);
 Shrimp_Value Shrimp_function_alloc_temp(Shrimp_Function* func);
 void Shrimp_function_assign_temp(Shrimp_Function* func, Shrimp_Value target, Shrimp_Value value);
 Shrimp_Value Shrimp_value_make_const(uint64_t num);
@@ -164,6 +166,7 @@ void variableLUT_insert(VariableLUT* lut, StringView name, Shrimp_Value value, A
 NameIRValue* variableLUT_get(const VariableLUT* lut, StringView name);
 
 bool generate_mod(Body* nodes, Shrimp_Module* out, Arena* arena);
+bool generate_statement(const Stmt* st, Shrimp_Function* out, VariableLUT* lut, Arena* arena);
 bool generate_expr(Shrimp_Value* out_value, const Expr* n, Shrimp_Function* out, const VariableLUT* lut);
 
 
@@ -205,30 +208,42 @@ bool generate_mod(Body* nodes, Shrimp_Module* out, Arena* arena) {
     *out = Shrimp_module_new("main");
     Shrimp_Function* main_func = Shrimp_module_new_function(out, "_start");
     VariableLUT lut = {0};
-    for (size_t i = 0; i < nodes->count; i++) {
-        switch (nodes->items[i].type) {
-            case ST_RET: {
-                Shrimp_Value value;
-                if (!generate_expr(&value, &nodes->items[i].ret, main_func, &lut)) return false;
-                Shrimp_function_return(main_func, value);
-                break;
-            }
-            case ST_VAR_DEF: {
-                NameIRValue var = {
-                    .name = nodes->items[i].var_def.name,
-                };
-                if (!generate_expr(&var.val, &nodes->items[i].var_def.value, main_func, &lut)) return false;
-                da_push(&lut, var, arena);
-                break;
-            }
-            case ST_VAR_REASSIGN: {
-                NameIRValue* var = variableLUT_get(&lut, nodes->items[i].var_reassign.name);
-                if (!generate_expr(&var->val, &nodes->items[i].var_reassign.value, main_func, &lut)) return false;
-                break;
-            }
+    for (size_t i = 0; i < nodes->count; i++) generate_statement(&nodes->items[i], main_func, &lut, arena);
+    if (!Shrimp_module_verify(out)) return false;
+    return true;
+}
+
+bool generate_statement(const Stmt* st, Shrimp_Function* out, VariableLUT* lut, Arena* arena) {
+    switch(st->type) {
+        case ST_RET: {
+            Shrimp_Value value;
+            if (!generate_expr(&value, &st->ret, out, lut)) return false;
+            Shrimp_function_return(out, value);
+            break;
+        }
+        case ST_VAR_DEF: {
+            NameIRValue var = {
+                .name = st->var_def.name,
+            };
+            if (!generate_expr(&var.val, &st->var_def.value, out, lut)) return false;
+            da_push(lut, var, arena);
+            break;
+        }
+        case ST_VAR_REASSIGN: {
+            NameIRValue* var = variableLUT_get(lut, st->var_reassign.name);
+            if (!generate_expr(&var->val, &st->var_reassign.value, out, lut)) return false;
+            break;
+        }
+        case ST_IF: {
+            Shrimp_Label after = Shrimp_function_label_alloc(out);
+            Shrimp_Value value;
+            if (!generate_expr(&value, &st->if_st.cond, out, lut)) return false;
+            Shrimp_function_jump_if_not(out, value, after);
+            for (size_t j = 0; j < st->if_st.body.count; j++) generate_statement(&st->if_st.body.items[j], out, lut, arena);
+            Shrimp_function_label_push(out, after);
+            break;
         }
     }
-    if (!Shrimp_module_verify(out)) return false;
     return true;
 }
 
@@ -496,7 +511,7 @@ void Shrimp_module_const_fold(Shrimp_Module* mod) {
                     }
                     break;
                 }
-                case SHRIMP_IT_LABEL: case SHRIMP_IT_JUMP: case SHRIMP_IT_JUMP_IF: break;
+                case SHRIMP_IT_LABEL: case SHRIMP_IT_JUMP: case SHRIMP_IT_JUMP_IF_NOT: break;
             }
         }
     }
@@ -551,8 +566,8 @@ bool Shrimp_module_verify(const Shrimp_Module* mod) {
                     }
                     break;
                 }
-                case SHRIMP_IT_JUMP_IF: {
-                    if (ins->jmp_if.to >= func->label_count) {
+                case SHRIMP_IT_JUMP_IF_NOT: {
+                    if (ins->jmp_if_not.to >= func->label_count) {
                         fprintf(stderr, "[Shrimp: Module %s, function %s, verification failure]: Invalid label provided to jump to %zu when max is %zu\n", mod->name, func->name, ins->label, func->label_count);
                         return false;
                     }
@@ -654,10 +669,10 @@ void Shrimp_module_dump(FILE* file, Shrimp_Module mod) {
                     fprintf(file, "jump @%zu", instr->jmp.to);
                     break;
                 }
-                case SHRIMP_IT_JUMP_IF: {
-                    fprintf(file, "jump_nz ");
-                    Shrimp_value_dump(file, instr->jmp_if.cond);
-                    fprintf(file, " @%zu", instr->jmp_if.to);
+                case SHRIMP_IT_JUMP_IF_NOT: {
+                    fprintf(file, "jump_z ");
+                    Shrimp_value_dump(file, instr->jmp_if_not.cond);
+                    fprintf(file, " @%zu", instr->jmp_if_not.to);
                     break;
                 }
             }
@@ -793,6 +808,27 @@ void Shrimp_function_assign_temp(Shrimp_Function* func, Shrimp_Value target, Shr
     Shrimp_da_push(func, instr);
 }
 
+void Shrimp_function_jump_if_not(Shrimp_Function* func, Shrimp_Value v, Shrimp_Label l) {
+    Shrimp_Instr instr = {
+        .t = SHRIMP_IT_JUMP_IF_NOT,
+        .jmp_if_not = {
+            .cond = v,
+            .to = l
+        }
+    };
+    Shrimp_da_push(func, instr);
+}
+void Shrimp_function_jump(Shrimp_Function* func, Shrimp_Label l) {
+    Shrimp_Instr instr = {
+        .t = SHRIMP_IT_JUMP,
+        .jmp = {
+            .to = l
+        }
+    };
+    Shrimp_da_push(func, instr);
+
+}
+
 bool Shrimp_module_x86_64_dump_nasm_mod(const Shrimp_Module* mod, FILE* file) {
     for (size_t i = 0; i < mod->count; i++) {
         fprintf(file, "section .text\n");
@@ -862,10 +898,10 @@ bool Shrimp_module_x86_64_dump_nasm_mod(const Shrimp_Module* mod, FILE* file) {
                     fprintf(file, "  jmp .%zu\n", instr->jmp.to);
                     break;
                 }
-                case SHRIMP_IT_JUMP_IF: {
-                    Shrimp_x86_64_nasm_mov_value_to_reg(&instr->jmp_if.cond, "r10", file);
+                case SHRIMP_IT_JUMP_IF_NOT: {
+                    Shrimp_x86_64_nasm_mov_value_to_reg(&instr->jmp_if_not.cond, "r10", file);
                     fprintf(file, "  cmp r10, 0\n");
-                    fprintf(file, "  jnz .%zu\n", instr->jmp_if.to);
+                    fprintf(file, "  jz .%zu\n", instr->jmp_if_not.to);
                     break;
                 }
             }
