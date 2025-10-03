@@ -1,4 +1,3 @@
-#include "error.h"
 #include "str.h"
 #include <assert.h>
 #include <stdbool.h>
@@ -195,7 +194,7 @@ int main(int argc, char** argv) {
     if (!generate_mod(&nodes, &mod, &arena)) return false;
     Shrimp_CompOptions opts = {
         .target = SHRIMP_TARGET_X86_64_NASM_LINUX,
-        .opts = SHRIMP_OPT_NONE,
+        .opts = SHRIMP_OPT_CONST_FOLD,
         .output_kind = SHRIMP_OUTPUT_EXE,
         .output_name = mod.name
     };
@@ -231,7 +230,9 @@ bool generate_statement(const Stmt* st, Shrimp_Function* out, VariableLUT* lut, 
         }
         case ST_VAR_REASSIGN: {
             NameIRValue* var = variableLUT_get(lut, st->var_reassign.name);
-            if (!generate_expr(&var->val, &st->var_reassign.value, out, lut)) return false;
+            Shrimp_Value new = {0};
+            if (!generate_expr(&new, &st->var_reassign.value, out, lut)) return false;
+            Shrimp_function_assign_temp(out, var->val, new);
             break;
         }
         case ST_IF: {
@@ -243,6 +244,21 @@ bool generate_statement(const Stmt* st, Shrimp_Function* out, VariableLUT* lut, 
             Shrimp_function_label_push(out, after);
             break;
         }
+        case ST_WHILE: {
+            Shrimp_Label condition = Shrimp_function_label_alloc(out);
+            Shrimp_Label after = Shrimp_function_label_alloc(out);
+
+            Shrimp_function_label_push(out, condition);
+            Shrimp_Value value;
+            if (!generate_expr(&value, &st->while_st.cond, out, lut)) return false;
+            Shrimp_function_jump_if_not(out, value, after);
+
+            for (size_t j = 0; j < st->while_st.body.count; j++) generate_statement(&st->while_st.body.items[j], out, lut, arena);
+
+            Shrimp_function_jump(out, condition);
+            Shrimp_function_label_push(out, after);
+            break;
+        }
     }
     return true;
 }
@@ -250,7 +266,8 @@ bool generate_statement(const Stmt* st, Shrimp_Function* out, VariableLUT* lut, 
 bool generate_expr(Shrimp_Value* out_value, const Expr* n, Shrimp_Function* out, const VariableLUT* lut) {
     switch (n->type) {
         case ET_NUMBER: {
-            *out_value = Shrimp_value_make_const(n->number);
+            *out_value = Shrimp_function_alloc_temp(out);
+            Shrimp_function_assign_temp(out, *out_value, Shrimp_value_make_const(n->number));
             return true;
         }
         case ET_ID: {
@@ -511,7 +528,12 @@ void Shrimp_module_const_fold(Shrimp_Module* mod) {
                     }
                     break;
                 }
-                case SHRIMP_IT_LABEL: case SHRIMP_IT_JUMP: case SHRIMP_IT_JUMP_IF_NOT: break;
+                case SHRIMP_IT_LABEL: {
+                    pairs.count = 0;
+                    break;
+                }
+                case SHRIMP_IT_JUMP: case SHRIMP_IT_JUMP_IF_NOT: break;
+                                                                                       
             }
         }
     }
@@ -858,10 +880,9 @@ bool Shrimp_module_x86_64_dump_nasm_mod(const Shrimp_Module* mod, FILE* file) {
                     break;
                 }
                 case SHRIMP_IT_SUB: {
-                    fprintf(file, "  mov qword [rbp - %zu], 0\n", (instr->binop.result + 1) * 8);
                     Shrimp_x86_64_nasm_mov_value_to_reg(&instr->binop.l, "r10", file);
+                    fprintf(file, "  mov qword [rbp - %zu], r10\n", (instr->binop.result + 1) * 8);
                     Shrimp_x86_64_nasm_mov_value_to_reg(&instr->binop.r, "r11", file);
-                    fprintf(file, "  sub [rbp - %zu], r10\n", (instr->binop.result + 1) * 8);
                     fprintf(file, "  sub [rbp - %zu], r11\n", (instr->binop.result + 1) * 8);
                     break;
                 }

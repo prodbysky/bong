@@ -73,6 +73,12 @@ static bool parser_stmt(Parser* parser, Stmt* out) {
                     if (!parser_block(parser, &out->if_st.body)) return false;
                     return true;
                 }
+                case KT_WHILE: {
+                    out->type = ST_WHILE;
+                    if (!parser_expression(parser, &out->while_st.cond)) return false;
+                    if (!parser_block(parser, &out->while_st.body)) return false;
+                    return true;
+                }
             }
         }
         case TT_IDENT: {

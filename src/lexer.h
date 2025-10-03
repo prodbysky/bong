@@ -30,6 +30,7 @@ typedef enum {
     KT_NO = 0,
     KT_RETURN,
     KT_IF,
+    KT_WHILE,
 } KeywordType;
 
 

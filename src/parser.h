@@ -23,6 +23,7 @@ typedef enum {
 typedef enum {
     ST_IF,
     ST_RET,
+    ST_WHILE,
     ST_VAR_DEF,
     ST_VAR_REASSIGN,
 } StmtType;
@@ -57,6 +58,10 @@ typedef struct Stmt {
             Expr cond;
             Body body;
         } if_st;
+        struct {
+            Expr cond;
+            Body body;
+        } while_st;
         struct {
             StringView name;
             Expr value;
