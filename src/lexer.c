@@ -14,7 +14,6 @@ static void lexer_skip_ws(Lexer* lexer);
 static char lexer_bump(Lexer* lexer);
 static char lexer_peek(const Lexer* lexer);
 
-
 void print_token(const Token* t) {
     switch (t->type) {
         case TT_NUMBER: {
