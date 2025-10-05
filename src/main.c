@@ -142,7 +142,7 @@ Shrimp_Value Shrimp_function_cmp_lt(Shrimp_Function* func, Shrimp_Value l, Shrim
 Shrimp_Value Shrimp_function_cmp_mt(Shrimp_Function* func, Shrimp_Value l, Shrimp_Value r);
 void Shrimp_function_jump_if_not(Shrimp_Function* func, Shrimp_Value v, Shrimp_Label l);
 void Shrimp_function_jump(Shrimp_Function* func, Shrimp_Label l);
-Shrimp_Value Shrimp_function_alloc_temp(Shrimp_Function* func);
+Shrimp_Value Shrimp_function_alloc_temp(Shrimp_Function* func, size_t size);
 void Shrimp_function_assign_temp(Shrimp_Function* func, Shrimp_Value target, Shrimp_Value value);
 Shrimp_Value Shrimp_value_make_const(uint64_t num);
 
@@ -277,7 +277,7 @@ bool generate_statement(const Stmt* st, Shrimp_Function* out, VariableLUT* lut, 
 bool generate_expr(Shrimp_Value* out_value, const Expr* n, Shrimp_Function* out, const VariableLUT* lut) {
     switch (n->type) {
         case ET_NUMBER: {
-            *out_value = Shrimp_function_alloc_temp(out);
+            *out_value = Shrimp_function_alloc_temp(out, 8);
             Shrimp_function_assign_temp(out, *out_value, Shrimp_value_make_const(n->number));
             return true;
         }
@@ -781,7 +781,7 @@ void Shrimp_function_label_push(Shrimp_Function* func, Shrimp_Label label) {
 }
 
 Shrimp_Value Shrimp_function_add(Shrimp_Function* func, Shrimp_Value l, Shrimp_Value r) {
-    Shrimp_Value result = Shrimp_function_alloc_temp(func);
+    Shrimp_Value result = Shrimp_function_alloc_temp(func, 8);
     Shrimp_Instr instr = {
         .t = SHRIMP_IT_ADD,
         .binop = {
@@ -796,7 +796,7 @@ Shrimp_Value Shrimp_function_add(Shrimp_Function* func, Shrimp_Value l, Shrimp_V
 }
 
 Shrimp_Value Shrimp_function_sub(Shrimp_Function* func, Shrimp_Value l, Shrimp_Value r) {
-    Shrimp_Value result = Shrimp_function_alloc_temp(func);
+    Shrimp_Value result = Shrimp_function_alloc_temp(func, 8);
     Shrimp_Instr instr = {
         .t = SHRIMP_IT_SUB,
         .binop = {
@@ -811,7 +811,7 @@ Shrimp_Value Shrimp_function_sub(Shrimp_Function* func, Shrimp_Value l, Shrimp_V
 }
 
 Shrimp_Value Shrimp_function_mul(Shrimp_Function* func, Shrimp_Value l, Shrimp_Value r) {
-    Shrimp_Value result = Shrimp_function_alloc_temp(func);
+    Shrimp_Value result = Shrimp_function_alloc_temp(func, 8);
     Shrimp_Instr instr = {
         .t = SHRIMP_IT_MUL,
         .binop = {
@@ -825,7 +825,7 @@ Shrimp_Value Shrimp_function_mul(Shrimp_Function* func, Shrimp_Value l, Shrimp_V
     return result;
 }
 Shrimp_Value Shrimp_function_div(Shrimp_Function* func, Shrimp_Value l, Shrimp_Value r) {
-    Shrimp_Value result = Shrimp_function_alloc_temp(func);
+    Shrimp_Value result = Shrimp_function_alloc_temp(func, 8);
     Shrimp_Instr instr = {
         .t = SHRIMP_IT_DIV,
         .binop = {
@@ -840,7 +840,7 @@ Shrimp_Value Shrimp_function_div(Shrimp_Function* func, Shrimp_Value l, Shrimp_V
 }
 
 Shrimp_Value Shrimp_function_cmp_lt(Shrimp_Function* func, Shrimp_Value l, Shrimp_Value r) {
-    Shrimp_Value result = Shrimp_function_alloc_temp(func);
+    Shrimp_Value result = Shrimp_function_alloc_temp(func, 8);
     Shrimp_Instr instr = {
         .t = SHRIMP_IT_CMP_LT,
         .binop = {
@@ -855,7 +855,7 @@ Shrimp_Value Shrimp_function_cmp_lt(Shrimp_Function* func, Shrimp_Value l, Shrim
 }
 
 Shrimp_Value Shrimp_function_cmp_mt(Shrimp_Function* func, Shrimp_Value l, Shrimp_Value r) {
-    Shrimp_Value result = Shrimp_function_alloc_temp(func);
+    Shrimp_Value result = Shrimp_function_alloc_temp(func, 8);
     Shrimp_Instr instr = {
         .t = SHRIMP_IT_CMP_MT,
         .binop = {
@@ -873,9 +873,7 @@ size_t Shrimp_function_align_temp_offset(size_t current_offset, size_t allocatio
     return (current_offset + allocation_size - 1) & ~(allocation_size - 1);
 }
 
-Shrimp_Value Shrimp_function_alloc_temp(Shrimp_Function* func) {
-    const size_t size = 8;
-    // NOTE: Different sizes
+Shrimp_Value Shrimp_function_alloc_temp(Shrimp_Function* func, size_t size) {
     size_t new_offset = Shrimp_function_align_temp_offset(func->current_offset, size);
     Shrimp_Value v = {
         .kind = SHRIMP_VK_TEMP,
