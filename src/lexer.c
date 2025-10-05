@@ -47,6 +47,7 @@ void print_token(const Token* t) {
                 case OT_MINUS: fprintf(stderr, "Operator `-`"); break;
                 case OT_STAR: fprintf(stderr, "Operator `*`"); break;
                 case OT_SLASH: fprintf(stderr, "Operator `/`"); break;
+                case OT_LT: fprintf(stderr, "Operator `<`"); break;
             }
             break;
         }
@@ -130,6 +131,12 @@ bool lexer_run(Lexer* lexer, Tokens* out) {
         }
         if (lexer_peek(lexer) == '}') {
             Token t = {.type = TT_CLOSE_CURLY, .offset = lexer->pos, .len = 1, .file = lexer->source};
+            da_push(out, t, lexer->arena);
+            lexer_bump(lexer);
+            continue;
+        }
+        if (lexer_peek(lexer) == '<') {
+            Token t = {.type = TT_OPERATOR, .op = OT_LT, .offset = lexer->pos, .len = 1, .file = lexer->source};
             da_push(out, t, lexer->arena);
             lexer_bump(lexer);
             continue;

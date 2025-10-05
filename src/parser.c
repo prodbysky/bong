@@ -162,7 +162,19 @@ static bool parser_eq(Parser* parser, Expr* out) {
 }
 
 static bool parser_cmp(Parser* parser, Expr* out) {
-    return parser_term(parser, out);
+    if (!parser_term(parser, out)) return false;
+    Token t = {0};
+    while (!parser_empty(parser) && parser_peek(parser, &t) && (t.type == TT_OPERATOR && t.op == OT_LT)) {
+        parser_bump(parser, &t);
+        Expr* left = arena_alloc(parser->arena, sizeof(Expr));
+        *left = *out;
+        out->type = ET_BIN;
+        out->bin.l = left;
+        out->bin.op = t.op;
+        out->bin.r = arena_alloc(parser->arena, sizeof(Expr));
+        if (!parser_term(parser, out->bin.r)) return false;
+    }
+    return true;
 }
 
 static bool parser_term(Parser* parser, Expr* out) {
