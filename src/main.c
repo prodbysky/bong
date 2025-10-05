@@ -40,7 +40,12 @@ typedef enum {
     SHRIMP_VK_TEMP,
 } Shrimp_ValueKind;
 
-typedef uint64_t Shrimp_Temp;
+typedef struct {
+    size_t index;
+    size_t size;
+    size_t offset;
+} Shrimp_Temp;
+
 typedef uint64_t Shrimp_Label;
 
 typedef struct {
@@ -370,7 +375,7 @@ void Shrimp_module_optimize(Shrimp_Module* mod, Shrimp_CompOptions opts) {
 }
 
 typedef struct {
-    Shrimp_Temp idx;
+    size_t idx;
     uint64_t value;
 } IndexValuePair;
 
@@ -383,7 +388,7 @@ typedef struct {
 IndexValuePair* find_pair(const IndexValuePairs* pairs, Shrimp_Value value) {
     if (value.kind == SHRIMP_VK_CONST) return NULL;
     for (size_t i = 0; i < pairs->count; i++) {
-        if (pairs->items[i].idx == value.t) {
+        if (pairs->items[i].idx == value.t.index) {
             return &pairs->items[i];
         }
     }
@@ -400,7 +405,7 @@ void Shrimp_module_const_fold(Shrimp_Module* mod) {
                 case SHRIMP_IT_ASSIGN: {
                     if (instr->assign.v.kind == SHRIMP_VK_CONST) {
                         IndexValuePair p = {
-                            .idx = instr->assign.into,
+                            .idx = instr->assign.into.index,
                             .value = instr->assign.v.c,
                         };
                         Shrimp_da_push(&pairs, p);
@@ -448,7 +453,7 @@ void Shrimp_module_const_fold(Shrimp_Module* mod) {
                         };
                         IndexValuePair p =  {
                             .value = *l_val + *r_val,
-                            .idx = instr->assign.into
+                            .idx = instr->assign.into.index,
                         };
                         Shrimp_da_push(&pairs, p);
                     }
@@ -477,7 +482,7 @@ void Shrimp_module_const_fold(Shrimp_Module* mod) {
                         };
                         IndexValuePair p =  {
                             .value = *l_val - *r_val,
-                            .idx = instr->assign.into
+                            .idx = instr->assign.into.index,
                         };
                         Shrimp_da_push(&pairs, p);
                     }
@@ -506,7 +511,7 @@ void Shrimp_module_const_fold(Shrimp_Module* mod) {
                         };
                         IndexValuePair p =  {
                             .value = *l_val - *r_val,
-                            .idx = instr->assign.into
+                            .idx = instr->assign.into.index,
                         };
                         Shrimp_da_push(&pairs, p);
                     }
@@ -535,7 +540,7 @@ void Shrimp_module_const_fold(Shrimp_Module* mod) {
                         };
                         IndexValuePair p =  {
                             .value = *l_val - *r_val,
-                            .idx = instr->assign.into
+                            .idx = instr->assign.into.index,
                         };
                         Shrimp_da_push(&pairs, p);
                     }
@@ -564,7 +569,7 @@ void Shrimp_module_const_fold(Shrimp_Module* mod) {
                         };
                         IndexValuePair p =  {
                             .value = *l_val - *r_val,
-                            .idx = instr->assign.into
+                            .idx = instr->assign.into.index,
                         };
                         Shrimp_da_push(&pairs, p);
                     }
@@ -593,7 +598,7 @@ void Shrimp_module_const_fold(Shrimp_Module* mod) {
                         };
                         IndexValuePair p =  {
                             .value = *l_val - *r_val,
-                            .idx = instr->assign.into
+                            .idx = instr->assign.into.index,
                         };
                         Shrimp_da_push(&pairs, p);
                     }
@@ -660,49 +665,49 @@ void Shrimp_module_dump(FILE* file, Shrimp_Module mod) {
             fprintf(file, "  ");
             switch (instr->t) {
                 case SHRIMP_IT_ADD: {
-                    fprintf(file, "$%zu <- ", instr->binop.result);
+                    fprintf(file, "$%zu <- ", instr->binop.result.index);
                     Shrimp_value_dump(file, instr->binop.l);
                     fprintf(file, " + ");
                     Shrimp_value_dump(file, instr->binop.r);
                     break;
                 }
                 case SHRIMP_IT_SUB: {
-                    fprintf(file, "$%zu <- ", instr->binop.result);
+                    fprintf(file, "$%zu <- ", instr->binop.result.index);
                     Shrimp_value_dump(file, instr->binop.l);
                     fprintf(file, " - ");
                     Shrimp_value_dump(file, instr->binop.r);
                     break;
                 }
                 case SHRIMP_IT_MUL: {
-                    fprintf(file, "$%zu <- ", instr->binop.result);
+                    fprintf(file, "$%zu <- ", instr->binop.result.index);
                     Shrimp_value_dump(file, instr->binop.l);
                     fprintf(file, " * ");
                     Shrimp_value_dump(file, instr->binop.r);
                     break;
                 }
                 case SHRIMP_IT_DIV: {
-                    fprintf(file, "$%zu <- ", instr->binop.result);
+                    fprintf(file, "$%zu <- ", instr->binop.result.index);
                     Shrimp_value_dump(file, instr->binop.l);
                     fprintf(file, " / ");
                     Shrimp_value_dump(file, instr->binop.r);
                     break;
                 }
                 case SHRIMP_IT_CMP_LT: {
-                    fprintf(file, "$%zu <- ", instr->binop.result);
+                    fprintf(file, "$%zu <- ", instr->binop.result.index);
                     Shrimp_value_dump(file, instr->binop.l);
                     fprintf(file, " < ");
                     Shrimp_value_dump(file, instr->binop.r);
                     break;
                 }
                 case SHRIMP_IT_CMP_MT: {
-                    fprintf(file, "$%zu <- ", instr->binop.result);
+                    fprintf(file, "$%zu <- ", instr->binop.result.index);
                     Shrimp_value_dump(file, instr->binop.l);
                     fprintf(file, " > ");
                     Shrimp_value_dump(file, instr->binop.r);
                     break;
                 }
                 case SHRIMP_IT_ASSIGN: {
-                    fprintf(file, "$%zu <- ", instr->assign.into);
+                    fprintf(file, "$%zu <- ", instr->assign.into.index);
                     Shrimp_value_dump(file, instr->assign.v);
                     break;
                 }
@@ -739,7 +744,7 @@ void Shrimp_value_dump(FILE* file, Shrimp_Value v) {
             break;
         }
         case SHRIMP_VK_TEMP: {
-            fprintf(file, "$%zu", v.t);
+            fprintf(file, "$%zu", v.t.index);
             break;
         }
     }
@@ -868,7 +873,11 @@ Shrimp_Value Shrimp_function_alloc_temp(Shrimp_Function* func) {
     func->current_offset += 8;
     return (Shrimp_Value) {
         .kind = SHRIMP_VK_TEMP,
-        .t = func->temp_c++
+        .t = {
+            .size = 8,
+            .offset = func->current_offset,
+            .index = func->temp_c++
+        }
     };
 }
 
@@ -933,25 +942,25 @@ bool Shrimp_module_x86_64_dump_nasm_mod(const Shrimp_Module* mod, FILE* file) {
             const Shrimp_Instr* instr = &f->items[j];
             switch (instr->t) {
                 case SHRIMP_IT_ADD: {
-                    fprintf(file, "  mov qword [rbp - %zu], 0\n", (instr->binop.result + 1) * 8);
+                    fprintf(file, "  mov qword [rbp - %zu], 0\n", instr->binop.result.offset);
                     Shrimp_x86_64_nasm_mov_value_to_reg(&instr->binop.l, "r10", file);
                     Shrimp_x86_64_nasm_mov_value_to_reg(&instr->binop.r, "r11", file);
-                    fprintf(file, "  add [rbp - %zu], r10\n", (instr->binop.result + 1) * 8);
-                    fprintf(file, "  add [rbp - %zu], r11\n", (instr->binop.result + 1) * 8);
+                    fprintf(file, "  add [rbp - %zu], r10\n", instr->binop.result.offset);
+                    fprintf(file, "  add [rbp - %zu], r11\n", instr->binop.result.offset);
                     break;
                 }
                 case SHRIMP_IT_SUB: {
                     Shrimp_x86_64_nasm_mov_value_to_reg(&instr->binop.l, "r10", file);
-                    fprintf(file, "  mov qword [rbp - %zu], r10\n", (instr->binop.result + 1) * 8);
+                    fprintf(file, "  mov qword [rbp - %zu], r10\n", instr->binop.result.offset);
                     Shrimp_x86_64_nasm_mov_value_to_reg(&instr->binop.r, "r11", file);
-                    fprintf(file, "  sub [rbp - %zu], r11\n", (instr->binop.result + 1) * 8);
+                    fprintf(file, "  sub [rbp - %zu], r11\n", instr->binop.result.offset);
                     break;
                 }
                 case SHRIMP_IT_MUL: {
                     Shrimp_x86_64_nasm_mov_value_to_reg(&instr->binop.l, "r10", file);
                     Shrimp_x86_64_nasm_mov_value_to_reg(&instr->binop.r, "r11", file);
                     fprintf(file, "  imul r10, r11\n");
-                    fprintf(file, "  mov qword [rbp - %zu], r10\n", (instr->binop.result + 1) * 8);
+                    fprintf(file, "  mov qword [rbp - %zu], r10\n", instr->binop.result.offset);
                     break;
                 }
                 case SHRIMP_IT_DIV: {
@@ -959,12 +968,12 @@ bool Shrimp_module_x86_64_dump_nasm_mod(const Shrimp_Module* mod, FILE* file) {
                     Shrimp_x86_64_nasm_mov_value_to_reg(&instr->binop.l, "rax", file);
                     Shrimp_x86_64_nasm_mov_value_to_reg(&instr->binop.r, "r10", file);
                     fprintf(file, "  idiv r10\n");
-                    fprintf(file, "  mov [rbp - %zu], rax\n", (instr->binop.result + 1) * 8);
+                    fprintf(file, "  mov [rbp - %zu], rax\n", instr->binop.result.offset);
                     break;
                 }
                 case SHRIMP_IT_ASSIGN: {
                     Shrimp_x86_64_nasm_mov_value_to_reg(&instr->assign.v, "r10", file);
-                    fprintf(file, "  mov [rbp - %zu], r10\n", (instr->assign.into + 1) * 8);
+                    fprintf(file, "  mov [rbp - %zu], r10\n", instr->assign.into.offset);
                     break;
                 }
                 case SHRIMP_IT_RETURN: {
@@ -994,7 +1003,7 @@ bool Shrimp_module_x86_64_dump_nasm_mod(const Shrimp_Module* mod, FILE* file) {
                     fprintf(file, "  mov r10, 0\n");
                     fprintf(file, "  mov r11, 1\n");
                     fprintf(file, "  cmovl r10, r11\n");
-                    fprintf(file, "  mov qword [rbp - %zu], r10\n", (instr->binop.result + 1) * 8);
+                    fprintf(file, "  mov qword [rbp - %zu], r10\n", instr->binop.result.offset);
                     break;
                 }
                 case SHRIMP_IT_CMP_MT: {
@@ -1004,7 +1013,7 @@ bool Shrimp_module_x86_64_dump_nasm_mod(const Shrimp_Module* mod, FILE* file) {
                     fprintf(file, "  mov r10, 0\n");
                     fprintf(file, "  mov r11, 1\n");
                     fprintf(file, "  cmovg r10, r11\n");
-                    fprintf(file, "  mov qword [rbp - %zu], r10\n", (instr->binop.result + 1) * 8);
+                    fprintf(file, "  mov qword [rbp - %zu], r10\n", instr->binop.result.offset);
                     break;
                 }
             }
@@ -1030,7 +1039,7 @@ void Shrimp_x86_64_nasm_mov_value_to_reg(const Shrimp_Value* value, const char* 
     fprintf(out, "  mov %s, ", reg);
     switch(value->kind) {
         case SHRIMP_VK_TEMP: {
-            fprintf(out, "[rbp - %zu]\n", (value->t + 1) * 8);
+            fprintf(out, "[rbp - %zu]\n", value->t.offset);
             break;
         }
         case SHRIMP_VK_CONST: {
