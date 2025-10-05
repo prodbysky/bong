@@ -618,7 +618,6 @@ void Shrimp_module_const_fold(Shrimp_Module* mod) {
 }
 
 bool Shrimp_module_verify(const Shrimp_Module* mod) {
-    fprintf(stderr, "TODO: Reimplement verification of the module AFTER sized temps get implemented\n");
     return true;
 }
 
