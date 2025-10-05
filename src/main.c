@@ -83,6 +83,7 @@ typedef struct {
 typedef struct {
     const char* name;
     int64_t current_offset;
+    size_t last_allocated_size;
     size_t temp_c;
     Shrimp_Label label_count;
     // body
@@ -871,6 +872,7 @@ Shrimp_Value Shrimp_function_cmp_mt(Shrimp_Function* func, Shrimp_Value l, Shrim
 Shrimp_Value Shrimp_function_alloc_temp(Shrimp_Function* func) {
     // NOTE: Different sizes
     func->current_offset += 8;
+    func->last_allocated_size = 8;
     return (Shrimp_Value) {
         .kind = SHRIMP_VK_TEMP,
         .t = {
@@ -928,8 +930,8 @@ bool Shrimp_module_x86_64_dump_nasm_mod(const Shrimp_Module* mod, FILE* file) {
         fprintf(file, "%s:\n", f->name);
         fprintf(file, "  push rbp\n");
         fprintf(file, "  mov rbp, rsp\n");
-        // NOTE: the + 8 is cause the offset stores the current available offset
-        fprintf(file, "  sub rsp, %zu\n", f->current_offset + 8);
+        // NOTE: the + 8 is cause the offset stores the current available offset AND we are assuming 8 sized temps
+        fprintf(file, "  sub rsp, %zu\n", f->current_offset + f->last_allocated_size);
 
         // store callee saved registers according to the x86_64 sysV AMD64 abi
         fprintf(file, "  push rbx\n");
