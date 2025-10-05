@@ -28,6 +28,7 @@ int main(int argc, char** argv) {
                    "-o", "build/bongc", 
                    "-Wall", 
                    "-Wextra", 
+                   "-lm", 
                    "-g");
     if (rel) {
         cmd_append(&c, "-O3");
