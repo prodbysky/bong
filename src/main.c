@@ -77,7 +77,8 @@ typedef struct {
 
 typedef struct {
     const char* name;
-    size_t temp_count;
+    int64_t current_offset;
+    size_t temp_c;
     Shrimp_Label label_count;
     // body
     size_t count;
@@ -610,64 +611,7 @@ void Shrimp_module_const_fold(Shrimp_Module* mod) {
 }
 
 bool Shrimp_module_verify(const Shrimp_Module* mod) {
-    for (size_t f_i = 0; f_i < mod->count; f_i++) {
-        const Shrimp_Function* func = &mod->items[f_i];
-        for (size_t i_i = 0; i_i < func->count; i_i++) {
-            const Shrimp_Instr* ins = &func->items[i_i];
-            switch (ins->t) {
-                case SHRIMP_IT_RETURN: case SHRIMP_IT_CMP_LT: case SHRIMP_IT_CMP_MT: {
-                    continue;
-                }
-                case SHRIMP_IT_ADD: case SHRIMP_IT_SUB: case SHRIMP_IT_MUL: {
-                    if (ins->binop.result >= func->temp_count) {
-                        fprintf(stderr, "[Shrimp: Module %s, function %s, verification failure]: Result of add instruction cannot be a non-temporary value\n", mod->name, func->name);
-                        return false;
-                    }
-                    break;
-                }
-                case SHRIMP_IT_DIV: {
-                    if (ins->binop.result >= func->temp_count) {
-                        fprintf(stderr, "[Shrimp: Module %s, function %s, verification failure]: Result of add instruction cannot be a non-temporary value\n", mod->name, func->name);
-                        return false;
-                    }
-                    break;
-                    if (ins->binop.r.kind == SHRIMP_VK_CONST && ins->binop.r.c == 0) {
-                        fprintf(stderr, "[Shrimp: Module %s, function %s, verification failure]: Attempted to divide by zero\n", mod->name, func->name);
-                        return false;
-                    }
-                    break;
-                }
-                case SHRIMP_IT_ASSIGN: {
-                    if (ins->assign.into >= func->temp_count) {
-                        fprintf(stderr, "[Shrimp: Module %s, function %s, verification failure]: Place of assign instruction cannot be a non-temporary value\n", mod->name, func->name);
-                        return false;
-                    }
-                    break;
-                }
-                case SHRIMP_IT_LABEL: {
-                    if (ins->label >= func->label_count) {
-                        fprintf(stderr, "[Shrimp: Module %s, function %s, verification failure]: Invalid label inserted %zu when max is %zu\n", mod->name, func->name, ins->label, func->label_count);
-                        return false;
-                    }
-                    break;
-                }
-                case SHRIMP_IT_JUMP: {
-                    if (ins->jmp.to >= func->label_count) {
-                        fprintf(stderr, "[Shrimp: Module %s, function %s, verification failure]: Invalid label provided to jump to %zu when max is %zu\n", mod->name, func->name, ins->label, func->label_count);
-                        return false;
-                    }
-                    break;
-                }
-                case SHRIMP_IT_JUMP_IF_NOT: {
-                    if (ins->jmp_if_not.to >= func->label_count) {
-                        fprintf(stderr, "[Shrimp: Module %s, function %s, verification failure]: Invalid label provided to jump to %zu when max is %zu\n", mod->name, func->name, ins->label, func->label_count);
-                        return false;
-                    }
-                    break;
-                }
-            }
-        }
-    }
+    fprintf(stderr, "TODO: Reimplement verification of the module AFTER sized temps get implemented\n");
     return true;
 }
 
@@ -920,9 +864,11 @@ Shrimp_Value Shrimp_function_cmp_mt(Shrimp_Function* func, Shrimp_Value l, Shrim
 }
 
 Shrimp_Value Shrimp_function_alloc_temp(Shrimp_Function* func) {
+    // NOTE: Different sizes
+    func->current_offset += 8;
     return (Shrimp_Value) {
         .kind = SHRIMP_VK_TEMP,
-        .t = func->temp_count++
+        .t = func->temp_c++
     };
 }
 
@@ -973,7 +919,8 @@ bool Shrimp_module_x86_64_dump_nasm_mod(const Shrimp_Module* mod, FILE* file) {
         fprintf(file, "%s:\n", f->name);
         fprintf(file, "  push rbp\n");
         fprintf(file, "  mov rbp, rsp\n");
-        fprintf(file, "  sub rsp, %zu\n", f->temp_count * 8);
+        // NOTE: the + 8 is cause the offset stores the current available offset
+        fprintf(file, "  sub rsp, %zu\n", f->current_offset + 8);
 
         // store callee saved registers according to the x86_64 sysV AMD64 abi
         fprintf(file, "  push rbx\n");
