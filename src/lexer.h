@@ -25,6 +25,7 @@ typedef enum {
     OT_STAR,
     OT_SLASH,
     OT_LT,
+    OT_MT,
 } OperatorType;
 
 typedef enum {

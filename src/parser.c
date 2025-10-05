@@ -164,7 +164,7 @@ static bool parser_eq(Parser* parser, Expr* out) {
 static bool parser_cmp(Parser* parser, Expr* out) {
     if (!parser_term(parser, out)) return false;
     Token t = {0};
-    while (!parser_empty(parser) && parser_peek(parser, &t) && (t.type == TT_OPERATOR && t.op == OT_LT)) {
+    while (!parser_empty(parser) && parser_peek(parser, &t) && (t.type == TT_OPERATOR && (t.op == OT_LT || t.op == OT_MT))) {
         parser_bump(parser, &t);
         Expr* left = arena_alloc(parser->arena, sizeof(Expr));
         *left = *out;
