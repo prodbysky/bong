@@ -512,7 +512,7 @@ void Shrimp_module_const_fold(Shrimp_Module* mod) {
                             }
                         };
                         IndexValuePair p =  {
-                            .value = *l_val - *r_val,
+                            .value = *l_val * *r_val,
                             .idx = instr->assign.into.index,
                         };
                         Shrimp_da_push(&pairs, p);
@@ -541,7 +541,7 @@ void Shrimp_module_const_fold(Shrimp_Module* mod) {
                             }
                         };
                         IndexValuePair p =  {
-                            .value = *l_val - *r_val,
+                            .value = *l_val / *r_val,
                             .idx = instr->assign.into.index,
                         };
                         Shrimp_da_push(&pairs, p);
@@ -570,7 +570,7 @@ void Shrimp_module_const_fold(Shrimp_Module* mod) {
                             }
                         };
                         IndexValuePair p =  {
-                            .value = *l_val - *r_val,
+                            .value = *l_val < *r_val,
                             .idx = instr->assign.into.index,
                         };
                         Shrimp_da_push(&pairs, p);
@@ -599,7 +599,7 @@ void Shrimp_module_const_fold(Shrimp_Module* mod) {
                             }
                         };
                         IndexValuePair p =  {
-                            .value = *l_val - *r_val,
+                            .value = *l_val > *r_val,
                             .idx = instr->assign.into.index,
                         };
                         Shrimp_da_push(&pairs, p);
