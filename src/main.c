@@ -869,18 +869,25 @@ Shrimp_Value Shrimp_function_cmp_mt(Shrimp_Function* func, Shrimp_Value l, Shrim
     return result;
 }
 
+size_t Shrimp_function_align_temp_offset(size_t current_offset, size_t allocation_size) {
+    return (current_offset + allocation_size - 1) & ~(allocation_size - 1);
+}
+
 Shrimp_Value Shrimp_function_alloc_temp(Shrimp_Function* func) {
+    const size_t size = 8;
     // NOTE: Different sizes
-    func->current_offset += 8;
-    func->last_allocated_size = 8;
-    return (Shrimp_Value) {
+    size_t new_offset = Shrimp_function_align_temp_offset(func->current_offset, size);
+    Shrimp_Value v = {
         .kind = SHRIMP_VK_TEMP,
         .t = {
-            .size = 8,
-            .offset = func->current_offset,
+            .size = size,
+            .offset = new_offset,
             .index = func->temp_c++
         }
     };
+    func->last_allocated_size = size;
+    func->current_offset = new_offset + size;
+    return v;
 }
 
 Shrimp_Value Shrimp_value_make_const(uint64_t num) {
