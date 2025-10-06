@@ -33,6 +33,8 @@ static bool parser_unary(Parser* parser, Expr* out);
 static bool parser_primary(Parser* parser, Expr* out);
 static Token parser_last_token(const Parser* parser);
 
+static bool parser_type_name(Parser* parser, TypeName* out);
+
 bool parser_parse(Parser* parser, Body* out) {
     while (!parser_empty(parser)) {
         Stmt n = {0};
@@ -86,6 +88,8 @@ static bool parser_stmt(Parser* parser, Stmt* out) {
             if (!parser_bump(parser, &curr)) return false;
             switch (curr.type) {
                 case TT_COLON: {
+                    out->type = ST_VAR_DEF;
+                    if (!parser_type_name(parser, &out->var_def.type)) return false;
                     if (!parser_expect_and_bump(parser, TT_ASSIGN, &curr)) {
                         fprintf(stderr, "[ERROR]: After a bare identifier a [colon]-assign token is expected\n");
                         bong_error(parser->source, parser_last_token(parser).offset);
@@ -98,7 +102,6 @@ static bool parser_stmt(Parser* parser, Stmt* out) {
                         bong_error(parser->source, parser_last_token(parser).offset);
                         return false;
                     }
-                    out->type = ST_VAR_DEF;
                     out->var_def.name = name.id;
                     out->var_def.value = e;
                     return true;
@@ -152,6 +155,30 @@ static bool parser_block(Parser* parser, Body* out) {
     bong_error(parser->source, open_curly.offset);
     return false;
 }
+
+static bool parser_type_name(Parser* parser, TypeName* out) {
+    Token t;
+    if (!parser_bump(parser, &t)) return false;
+    switch (t.type) {
+        case TT_IDENT: {
+            if (t.id.count == 3 && strncmp(t.id.items, "u64", 3) == 0) {
+                out->type = TNT_PRIMITIVE;
+                out->primitive = PT_U64;
+                return true;
+            }
+            fprintf(stderr, "[ERROR]: Unknown type name %.*s found\n", (int)t.id.count, t.id.items);
+            bong_error(parser->source, t.offset);
+            return false;
+        }
+        default: {
+            fprintf(stderr, "[ERROR]: Unexpected token found in place of a type name\n");
+            bong_error(parser->source, t.offset);
+            return false;
+        }
+    }
+    return false;
+}
+
 
 static bool parser_expression(Parser* parser, Expr* out) {
     return parser_eq(parser, out);

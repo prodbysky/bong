@@ -41,6 +41,21 @@ typedef struct Expr {
     };
 } Expr;
 
+typedef enum {
+    TNT_NO,
+    TNT_PRIMITIVE
+} TypeNameType;
+
+typedef enum {
+    PT_U64
+} PrimitiveType;
+
+typedef struct {
+    TypeNameType type;
+    union {
+        PrimitiveType primitive;
+    };
+} TypeName;
 
 struct Stmt;
 
@@ -64,6 +79,7 @@ typedef struct Stmt {
         } while_st;
         struct {
             StringView name;
+            TypeName type;
             Expr value;
         } var_def;
         struct {
