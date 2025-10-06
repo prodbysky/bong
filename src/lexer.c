@@ -183,7 +183,7 @@ static bool lexer_kw_or_id(Lexer* lexer, Token* out) {
     out->kw = lexer_to_kw(lexer->source->content.items + out->offset, lexer->pos - out->offset);
     if (!out->kw) {
         out->id.items = &lexer->source->content.items[out->offset];
-        out->id.count = out->offset - lexer->pos;
+        out->id.count = lexer->pos - out->offset;
         out->type = TT_IDENT;
         return true;
     } else {

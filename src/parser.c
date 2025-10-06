@@ -247,9 +247,7 @@ static bool parser_expect_and_bump(Parser* parser, TokenType type, Token* out) {
         return false;
     }
     if (out->type != type) {
-        // TODO: Human readable token printing
         fprintf(stderr, "[ERROR]: Expected token: %d, got: %d\n", type, out->type);
-        bong_error(parser->source, out->offset);
         return false;
     }
     return true;

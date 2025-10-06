@@ -335,7 +335,7 @@ void variableLUT_insert(VariableLUT* lut, StringView name, Shrimp_Value value, A
 }
 NameIRValue* variableLUT_get(const VariableLUT* lut, StringView name) {
     for (size_t i = 0; i < lut->count; i++) {
-        if (name.count == lut->items[i].name.count && strncmp(name.items, lut->items[i].name.items, name.count)) {
+        if (name.count == lut->items[i].name.count && strncmp(name.items, lut->items[i].name.items, name.count) == 0) {
             return &lut->items[i];
         }
     }
