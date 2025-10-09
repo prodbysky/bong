@@ -3,15 +3,16 @@
 #include <stdio.h>
 #include "error.h"
 #include "lexer.h"
+#include "str.h"
 #include <assert.h>
 
-static bool parser_peek(const Parser* parser, Token* out);
-static bool parser_bump(Parser* parser, Token* out);
-static bool parser_expect_and_bump(Parser* parser, TokenType type, Token* out);
-static bool parser_empty(const Parser* parser);
+static bool __peek(const Parser* parser, Token* out);
+static bool __bump(Parser* parser, Token* out);
+static bool __expect_and_bump(Parser* parser, TokenType type, Token* out);
+static bool __empty(const Parser* parser);
 
-static bool parser_stmt(Parser* parser, Stmt* out);
-static bool parser_block(Parser* parser, Body* out);
+static bool __stmt(Parser* parser, Stmt* out);
+static bool __block(Parser* parser, Body* out);
 /*
     Ref: Crafting interpreters page 80
     expression → equality ;
@@ -24,31 +25,22 @@ static bool parser_block(Parser* parser, Body* out);
     primary → NUMBER | STRING | "true" | "false"
     | "(" expression ")" ;
 */
-static bool parser_expression(Parser* parser, Expr* out);
-static bool parser_eq(Parser* parser, Expr* out);
-static bool parser_cmp(Parser* parser, Expr* out);
-static bool parser_term(Parser* parser, Expr* out);
-static bool parser_factor(Parser* parser, Expr* out);
-static bool parser_unary(Parser* parser, Expr* out);
-static bool parser_primary(Parser* parser, Expr* out);
-static Token parser_last_token(const Parser* parser);
+static bool __expression(Parser* parser, Expr* out);
+static bool __eq(Parser* parser, Expr* out);
+static bool __cmp(Parser* parser, Expr* out);
+static bool __term(Parser* parser, Expr* out);
+static bool __factor(Parser* parser, Expr* out);
+static bool __unary(Parser* parser, Expr* out);
+static bool __primary(Parser* parser, Expr* out);
+static Token __last_token(const Parser* parser);
 
-static bool parser_type_name(Parser* parser, TypeName* out);
+static bool __type_name(Parser* parser, TypeName* out);
 
-bool parser_parse(Parser* parser, Body* out) {
-    while (!parser_empty(parser)) {
-        Stmt n = {0};
-        if (!parser_stmt(parser, &n)) return false;
-        da_push(out, n, parser->arena);
-    }
-    return true;
-}
-
-static bool parser_stmt(Parser* parser, Stmt* out) {
+static bool __stmt(Parser* parser, Stmt* out) {
     Token curr;
-    if (!parser_bump(parser, &curr)) {
+    if (!__bump(parser, &curr)) {
         fprintf(stderr, "[ERROR]: Missing keyword for statment\n");
-        bong_error(parser->source, parser_last_token(parser).offset);
+        bong_error(parser->source, __last_token(parser).offset);
         return false;
     }
 
@@ -58,11 +50,11 @@ static bool parser_stmt(Parser* parser, Stmt* out) {
                 case KT_NO: assert(false);
                 case KT_RETURN: {
                     Expr e;
-                    if (!parser_expression(parser, &e)) return false;
+                    if (!__expression(parser, &e)) return false;
                     out->type = ST_RET;
                     out->ret = e;
                     Token hopefully_semi = {0};
-                    if (!parser_expect_and_bump(parser, TT_SEMI, &hopefully_semi)) {
+                    if (!__expect_and_bump(parser, TT_SEMI, &hopefully_semi)) {
                         fprintf(stderr, "[ERROR]: Missing statment termination semicolon\n");
                         bong_error(parser->source, hopefully_semi.offset);
                         return false;
@@ -71,35 +63,35 @@ static bool parser_stmt(Parser* parser, Stmt* out) {
                 }
                 case KT_IF: {
                     out->type = ST_IF;
-                    if (!parser_expression(parser, &out->if_st.cond)) return false;
-                    if (!parser_block(parser, &out->if_st.body)) return false;
+                    if (!__expression(parser, &out->if_st.cond)) return false;
+                    if (!__block(parser, &out->if_st.body)) return false;
                     return true;
                 }
                 case KT_WHILE: {
                     out->type = ST_WHILE;
-                    if (!parser_expression(parser, &out->while_st.cond)) return false;
-                    if (!parser_block(parser, &out->while_st.body)) return false;
+                    if (!__expression(parser, &out->while_st.cond)) return false;
+                    if (!__block(parser, &out->while_st.body)) return false;
                     return true;
                 }
             }
         }
         case TT_IDENT: {
             Token name = curr;
-            if (!parser_bump(parser, &curr)) return false;
+            if (!__bump(parser, &curr)) return false;
             switch (curr.type) {
                 case TT_COLON: {
                     out->type = ST_VAR_DEF;
-                    if (!parser_type_name(parser, &out->var_def.type)) return false;
-                    if (!parser_expect_and_bump(parser, TT_ASSIGN, &curr)) {
+                    if (!__type_name(parser, &out->var_def.type)) return false;
+                    if (!__expect_and_bump(parser, TT_ASSIGN, &curr)) {
                         fprintf(stderr, "[ERROR]: After a bare identifier a [colon]-assign token is expected\n");
-                        bong_error(parser->source, parser_last_token(parser).offset);
+                        bong_error(parser->source, __last_token(parser).offset);
                         return false;
                     }
                     Expr e = {0};
-                    if (!parser_expression(parser, &e)) return false;
-                    if (!parser_expect_and_bump(parser, TT_SEMI, &curr)) {
+                    if (!__expression(parser, &e)) return false;
+                    if (!__expect_and_bump(parser, TT_SEMI, &curr)) {
                         fprintf(stderr, "[ERROR]: A semicolon is expected after the expression of the var define statement\n");
-                        bong_error(parser->source, parser_last_token(parser).offset);
+                        bong_error(parser->source, __last_token(parser).offset);
                         return false;
                     }
                     out->var_def.name = name.id;
@@ -108,13 +100,13 @@ static bool parser_stmt(Parser* parser, Stmt* out) {
                 }
                 case TT_ASSIGN: {
                     Expr e = {0};
-                    if (!parser_expression(parser, &e)) return false;
+                    if (!__expression(parser, &e)) return false;
                     out->type = ST_VAR_REASSIGN;
                     out->var_reassign.name = name.id;
                     out->var_reassign.value = e;
-                    if (!parser_expect_and_bump(parser, TT_SEMI, &curr)) {
+                    if (!__expect_and_bump(parser, TT_SEMI, &curr)) {
                         fprintf(stderr, "[ERROR]: A semicolon is expected after the expression of the var define statement\n");
-                        bong_error(parser->source, parser_last_token(parser).offset);
+                        bong_error(parser->source, __last_token(parser).offset);
                         return false;
                     }
                     return true;
@@ -135,20 +127,20 @@ static bool parser_stmt(Parser* parser, Stmt* out) {
     assert(false);
 }
 
-static bool parser_block(Parser* parser, Body* out) {
+static bool __block(Parser* parser, Body* out) {
     Token open_curly;
-    if (!parser_expect_and_bump(parser, TT_OPEN_CURLY, &open_curly)) {
+    if (!__expect_and_bump(parser, TT_OPEN_CURLY, &open_curly)) {
         fprintf(stderr, "[ERROR]: Expected a `{` to open a block\n");
         bong_error(parser->source, open_curly.offset);
         return false;
     }
-    while (parser_peek(parser, &open_curly)) {
+    while (__peek(parser, &open_curly)) {
         if (open_curly.type == TT_CLOSE_CURLY) {
-            parser_bump(parser, &open_curly);
+            __bump(parser, &open_curly);
             return true;
         }
         Stmt s = {0};
-        if (!parser_stmt(parser, &s)) return false;
+        if (!__stmt(parser, &s)) return false;
         da_push(out, s, parser->arena);
     }
     fprintf(stderr, "[ERROR]: Missing `}` to close a block\n");
@@ -156,9 +148,9 @@ static bool parser_block(Parser* parser, Body* out) {
     return false;
 }
 
-static bool parser_type_name(Parser* parser, TypeName* out) {
+static bool __type_name(Parser* parser, TypeName* out) {
     Token t;
-    if (!parser_bump(parser, &t)) return false;
+    if (!__bump(parser, &t)) return false;
     switch (t.type) {
         case TT_IDENT: {
             if (t.id.count == 3 && strncmp(t.id.items, "u64", 3) == 0) {
@@ -180,67 +172,67 @@ static bool parser_type_name(Parser* parser, TypeName* out) {
 }
 
 
-static bool parser_expression(Parser* parser, Expr* out) {
-    return parser_eq(parser, out);
+static bool __expression(Parser* parser, Expr* out) {
+    return __eq(parser, out);
 }
 
-static bool parser_eq(Parser* parser, Expr* out) {
-    return parser_cmp(parser, out);
+static bool __eq(Parser* parser, Expr* out) {
+    return __cmp(parser, out);
 }
 
-static bool parser_cmp(Parser* parser, Expr* out) {
-    if (!parser_term(parser, out)) return false;
+static bool __cmp(Parser* parser, Expr* out) {
+    if (!__term(parser, out)) return false;
     Token t = {0};
-    while (!parser_empty(parser) && parser_peek(parser, &t) && (t.type == TT_OPERATOR && (t.op == OT_LT || t.op == OT_MT))) {
-        parser_bump(parser, &t);
+    while (!__empty(parser) && __peek(parser, &t) && (t.type == TT_OPERATOR && (t.op == OT_LT || t.op == OT_MT))) {
+        __bump(parser, &t);
         Expr* left = arena_alloc(parser->arena, sizeof(Expr));
         *left = *out;
         out->type = ET_BIN;
         out->bin.l = left;
         out->bin.op = t.op;
         out->bin.r = arena_alloc(parser->arena, sizeof(Expr));
-        if (!parser_term(parser, out->bin.r)) return false;
+        if (!__term(parser, out->bin.r)) return false;
     }
     return true;
 }
 
-static bool parser_term(Parser* parser, Expr* out) {
-    if (!parser_factor(parser, out)) return false;
+static bool __term(Parser* parser, Expr* out) {
+    if (!__factor(parser, out)) return false;
     Token t = {0};
-    while (!parser_empty(parser) && parser_peek(parser, &t) && (t.type == TT_OPERATOR && (t.op == OT_PLUS || t.op == OT_MINUS))) {
-        parser_bump(parser, &t);
+    while (!__empty(parser) && __peek(parser, &t) && (t.type == TT_OPERATOR && (t.op == OT_PLUS || t.op == OT_MINUS))) {
+        __bump(parser, &t);
         Expr* left = arena_alloc(parser->arena, sizeof(Expr));
         *left = *out;
         out->type = ET_BIN;
         out->bin.l = left;
         out->bin.op = t.op;
         out->bin.r = arena_alloc(parser->arena, sizeof(Expr));
-        if (!parser_factor(parser, out->bin.r)) return false;
+        if (!__factor(parser, out->bin.r)) return false;
     }
     return true;
 }
 
-static bool parser_factor(Parser* parser, Expr* out) {
-    if (!parser_unary(parser, out)) return false;
+static bool __factor(Parser* parser, Expr* out) {
+    if (!__unary(parser, out)) return false;
     Token t = {0};
-    while (!parser_empty(parser) && parser_peek(parser, &t) && (t.type == TT_OPERATOR && (t.op == OT_STAR || t.op == OT_SLASH))) {
-        parser_bump(parser, &t);
+    while (!__empty(parser) && __peek(parser, &t) && (t.type == TT_OPERATOR && (t.op == OT_STAR || t.op == OT_SLASH))) {
+        __bump(parser, &t);
         Expr* left = arena_alloc(parser->arena, sizeof(Expr));
         *left = *out;
         out->type = ET_BIN;
         out->bin.l = left;
         out->bin.op = t.op;
         out->bin.r = arena_alloc(parser->arena, sizeof(Expr));
-        if (!parser_unary(parser, out->bin.r)) return false;
+        if (!__unary(parser, out->bin.r)) return false;
     }
     return true;
 }
-static bool parser_unary(Parser* parser, Expr* out) {
-    return parser_primary(parser, out);
+static bool __unary(Parser* parser, Expr* out) {
+    return __primary(parser, out);
 }
-static bool parser_primary(Parser* parser, Expr* out) {
+static bool __primary(Parser* parser, Expr* out) {
     Token t = {0};
-    if (!parser_bump(parser, &t)) {
+    if (!__bump(parser, &t)) {
         fprintf(stderr, "[ERROR]: Missing expression\n");
         return false;
     }
@@ -265,12 +257,12 @@ static bool parser_primary(Parser* parser, Expr* out) {
     return false;
 }
 
-static Token parser_last_token(const Parser* parser) {
+static Token __last_token(const Parser* parser) {
     return parser->tokens->items[parser->pos - 1];
 }
 
-static bool parser_expect_and_bump(Parser* parser, TokenType type, Token* out) {
-    if (!parser_bump(parser, out)) {
+static bool __expect_and_bump(Parser* parser, TokenType type, Token* out) {
+    if (!__bump(parser, out)) {
         return false;
     }
     if (out->type != type) {
@@ -280,8 +272,8 @@ static bool parser_expect_and_bump(Parser* parser, TokenType type, Token* out) {
     return true;
 }
 
-static bool parser_bump(Parser* parser, Token* out) {
-    if (!parser_peek(parser, out)) {
+static bool __bump(Parser* parser, Token* out) {
+    if (!__peek(parser, out)) {
         fprintf(stderr, "[ERROR]: Tried to bump empty lexer\n");
         return false;
     }
@@ -289,8 +281,8 @@ static bool parser_bump(Parser* parser, Token* out) {
     return true;
 }
 
-static bool parser_peek(const Parser* parser, Token* out) {
-    if (parser_empty(parser)) {
+static bool __peek(const Parser* parser, Token* out) {
+    if (__empty(parser)) {
         fprintf(stderr, "[ERROR]: Tried to peek empty lexer\n");
         return false;
     }
@@ -298,6 +290,6 @@ static bool parser_peek(const Parser* parser, Token* out) {
     return true;
 }
 
-static bool parser_empty(const Parser* parser) {
+static bool __empty(const Parser* parser) {
     return parser->pos >= parser->tokens->count;
 }

@@ -28,19 +28,6 @@ typedef enum {
     ST_VAR_REASSIGN,
 } StmtType;
 
-typedef struct Expr {
-    ExprType type;
-    union {
-        uint64_t number;
-        StringView id;
-        struct {
-            struct Expr* l;
-            struct Expr* r;
-            OperatorType op;
-        } bin;
-    };
-} Expr;
-
 typedef enum {
     TNT_NO,
     TNT_PRIMITIVE
@@ -56,6 +43,20 @@ typedef struct {
         PrimitiveType primitive;
     };
 } TypeName;
+
+typedef struct Expr {
+    ExprType type;
+    union {
+        uint64_t number;
+        StringView id;
+        struct {
+            struct Expr* l;
+            struct Expr* r;
+            OperatorType op;
+        } bin;
+    };
+} Expr;
+
 
 struct Stmt;
 
